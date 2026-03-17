@@ -74,16 +74,20 @@ export const getPaymentNotifications = async (
     const page = Math.max(1, parseInt(String(req.query.page), 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit), 10) || 20));
     const skip = (page - 1) * limit;
-    const search = String(req.query.search || '').trim();
     const filter: Record<string, unknown> = { userId: req.userId };
-    if (search) {
-      filter.$or = [
-        { source: new RegExp(search, 'i') },
-        { title: new RegExp(search, 'i') },
-        { message: new RegExp(search, 'i') },
-        { currency: new RegExp(search, 'i') },
-        { forwardedEmail: new RegExp(search, 'i') },
-      ];
+
+    const fromStr = String(req.query.from || '').trim();
+    const toStr = String(req.query.to || '').trim();
+    if (fromStr || toStr) {
+      filter.receivedAt = {};
+      if (fromStr) {
+        const from = new Date(fromStr);
+        if (!isNaN(from.getTime())) (filter.receivedAt as Record<string, Date>).$gte = from;
+      }
+      if (toStr) {
+        const to = new Date(toStr);
+        if (!isNaN(to.getTime())) (filter.receivedAt as Record<string, Date>).$lte = to;
+      }
     }
 
     const [data, total] = await Promise.all([
@@ -123,6 +127,27 @@ export const deleteAllPaymentNotifications = async (
         deletedCount: result.deletedCount ?? 0,
       },
     });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const deletePaymentNotification = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const deleted = await PaymentNotification.findOneAndDelete({
+      _id: id,
+      userId: req.userId,
+    });
+    if (!deleted) {
+      next(new BadRequestError('Payment notification not found'));
+      return;
+    }
+    res.json({ success: true, data: { deleted: true } });
   } catch (e) {
     next(e);
   }

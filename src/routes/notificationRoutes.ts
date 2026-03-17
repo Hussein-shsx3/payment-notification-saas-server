@@ -10,6 +10,7 @@ router.post('/', notificationController.createPaymentNotification);
 router.get('/', notificationController.getNotifications);
 router.get('/payments', notificationController.getPaymentNotifications);
 router.delete('/payments', notificationController.deleteAllPaymentNotifications);
+router.delete('/payments/:id', notificationController.deletePaymentNotification);
 router.put('/:id/read', notificationController.markAsRead);
 
 export default router;

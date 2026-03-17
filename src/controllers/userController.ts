@@ -6,6 +6,23 @@ import { BadRequestError, NotFoundError } from '../utils/errors';
 
 const SALT_ROUNDS = 12;
 
+const toProfileResponse = (user: Record<string, unknown>) => {
+  const subscriptionEndRaw = user.subscriptionEnd;
+  const endDate =
+    typeof subscriptionEndRaw === 'string' || subscriptionEndRaw instanceof Date
+      ? new Date(subscriptionEndRaw)
+      : null;
+  const now = new Date();
+  const hasValidEnd = !!endDate && !Number.isNaN(endDate.getTime());
+  const isActive = hasValidEnd && endDate > now;
+
+  return {
+    ...user,
+    subscriptionStatus: isActive ? 'active' : 'inactive',
+    isSubscriptionActive: isActive,
+  };
+};
+
 export const getProfile = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const user = await User.findById(req.userId)
@@ -15,7 +32,7 @@ export const getProfile = async (req: AuthRequest, res: Response, next: NextFunc
       next(new NotFoundError('User not found'));
       return;
     }
-    res.json({ success: true, data: user });
+    res.json({ success: true, data: toProfileResponse(user as unknown as Record<string, unknown>) });
   } catch (e) {
     next(e);
   }
@@ -38,7 +55,10 @@ export const updateProfile = async (req: AuthRequest, res: Response, next: NextF
       next(new NotFoundError('User not found'));
       return;
     }
-    res.json({ success: true, data: user });
+    res.json({
+      success: true,
+      data: toProfileResponse(user.toObject() as unknown as Record<string, unknown>),
+    });
   } catch (e) {
     next(e);
   }

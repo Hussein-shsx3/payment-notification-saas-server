@@ -5,6 +5,8 @@ export interface IPaymentNotification extends Document {
   source: string;
   title: string;
   message: string;
+  amount?: number;
+  currency?: string;
   receivedAt: Date;
   createdAt: Date;
 }
@@ -15,6 +17,8 @@ const paymentNotificationSchema = new Schema<IPaymentNotification>(
     source: { type: String, required: true },
     title: { type: String, required: true },
     message: { type: String, required: true },
+    amount: { type: Number },
+    currency: { type: String, trim: true, uppercase: true },
     receivedAt: { type: Date, required: true },
   },
   { timestamps: true }

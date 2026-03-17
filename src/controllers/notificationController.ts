@@ -10,9 +10,14 @@ export const createPaymentNotification = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { source, title, message, receivedAt } = req.body;
+    const { source, title, message, receivedAt, amount, currency } = req.body;
     if (!source || !title || !message) {
       next(new BadRequestError('source, title and message are required'));
+      return;
+    }
+    const parsedAmount = Number(amount);
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      next(new BadRequestError('Valid payment amount is required'));
       return;
     }
 
@@ -22,10 +27,12 @@ export const createPaymentNotification = async (
       source,
       title,
       message,
+      amount: parsedAmount,
+      currency,
       receivedAt: received,
     });
 
-    const user = await User.findById(req.userId).select('subscriptionEnd targetEmail').lean();
+    const user = await User.findById(req.userId).select('subscriptionEnd targetEmail email').lean();
     if (!user) {
       res.status(201).json({ success: true, data: doc });
       return;
@@ -35,9 +42,10 @@ export const createPaymentNotification = async (
     const end = user.subscriptionEnd ? new Date(user.subscriptionEnd) : null;
     const isActive = end && end > now;
 
-    if (isActive && user.targetEmail) {
+    const destinationEmail = (user.targetEmail || user.email || '').trim();
+    if (isActive && destinationEmail) {
       try {
-        await sendPaymentNotificationEmail(user.targetEmail, source, title, message, received);
+        await sendPaymentNotificationEmail(destinationEmail, source, title, message, received);
       } catch (err) {
         console.error('Failed to send notification email:', err);
       }

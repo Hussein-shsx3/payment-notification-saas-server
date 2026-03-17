@@ -9,6 +9,7 @@ router.use(authenticate);
 router.post('/', notificationController.createPaymentNotification);
 router.get('/', notificationController.getNotifications);
 router.get('/payments', notificationController.getPaymentNotifications);
+router.delete('/payments', notificationController.deleteAllPaymentNotifications);
 router.put('/:id/read', notificationController.markAsRead);
 
 export default router;

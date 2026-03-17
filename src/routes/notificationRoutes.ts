@@ -1,13 +1,14 @@
 import { Router } from 'express';
-import { authenticate, requireActiveSubscription } from '../middleware';
+import { authenticate } from '../middleware';
 import * as notificationController from '../controllers/notificationController';
 
 const router = Router();
 
 router.use(authenticate);
 
-router.post('/', requireActiveSubscription, notificationController.createPaymentNotification);
+router.post('/', notificationController.createPaymentNotification);
 router.get('/', notificationController.getNotifications);
+router.get('/payments', notificationController.getPaymentNotifications);
 router.put('/:id/read', notificationController.markAsRead);
 
 export default router;

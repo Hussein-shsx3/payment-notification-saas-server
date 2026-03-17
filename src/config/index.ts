@@ -42,4 +42,8 @@ export const config = {
     frontend: optional('FRONTEND_URL', 'http://localhost:3000'),
     admin: optional('ADMIN_URL', 'http://localhost:5173'),
   },
+
+  keepAlive: {
+    url: optional('KEEP_ALIVE_URL', ''),
+  },
 } as const;

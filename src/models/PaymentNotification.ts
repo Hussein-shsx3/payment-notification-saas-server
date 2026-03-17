@@ -7,6 +7,10 @@ export interface IPaymentNotification extends Document {
   message: string;
   amount?: number;
   currency?: string;
+  forwardedToEmail: boolean;
+  forwardedEmail?: string;
+  emailSentAt?: Date;
+  emailError?: string;
   receivedAt: Date;
   createdAt: Date;
 }
@@ -19,6 +23,10 @@ const paymentNotificationSchema = new Schema<IPaymentNotification>(
     message: { type: String, required: true },
     amount: { type: Number },
     currency: { type: String, trim: true, uppercase: true },
+    forwardedToEmail: { type: Boolean, default: false },
+    forwardedEmail: { type: String, trim: true, lowercase: true },
+    emailSentAt: { type: Date },
+    emailError: { type: String },
     receivedAt: { type: Date, required: true },
   },
   { timestamps: true }

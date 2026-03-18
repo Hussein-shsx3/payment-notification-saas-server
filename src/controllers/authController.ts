@@ -3,12 +3,9 @@ import bcrypt from 'bcryptjs';
 import { User } from '../models';
 import { BadRequestError, UnauthorizedError, NotFoundError } from '../utils/errors';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken, randomToken } from '../utils/tokens';
-import { sendVerificationEmail, sendPasswordResetEmail } from '../services/email';
 import { config } from '../config';
 
 const SALT_ROUNDS = 12;
-const VERIFICATION_EXPIRY_HOURS = 24;
-const RESET_PASSWORD_EXPIRY_HOURS = 1;
 
 export const register = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
@@ -26,8 +23,6 @@ export const register = async (req: Request, res: Response, next: NextFunction):
     }
 
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
-    const verificationToken = randomToken();
-    const verificationTokenExpires = new Date(Date.now() + VERIFICATION_EXPIRY_HOURS * 60 * 60 * 1000);
 
     const user = await User.create({
       fullName,
@@ -35,11 +30,8 @@ export const register = async (req: Request, res: Response, next: NextFunction):
       phoneNumber,
       passwordHash,
       targetEmail: email,
-      verificationToken,
-      verificationTokenExpires,
+      emailVerified: true,
     });
-
-    await sendVerificationEmail(email, verificationToken);
   } catch (e) {
     next(e);
     return;
@@ -47,7 +39,7 @@ export const register = async (req: Request, res: Response, next: NextFunction):
 
   res.status(201).json({
     success: true,
-    message: 'Registration successful. Please verify your email.',
+    message: 'Registration successful.',
   });
 };
 
@@ -70,11 +62,6 @@ export const login = async (req: Request, res: Response, next: NextFunction): Pr
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) {
       next(new UnauthorizedError('Invalid credentials'));
-      return;
-    }
-
-    if (!user.emailVerified) {
-      next(new UnauthorizedError('Please verify your email first'));
       return;
     }
 
@@ -132,21 +119,10 @@ export const forgotPassword = async (req: Request, res: Response, next: NextFunc
       next(new BadRequestError('Email is required'));
       return;
     }
-
-    const user = await User.findOne({ email }).select('+resetPasswordToken +resetPasswordExpires');
-    if (!user) {
-      res.json({ success: true, message: 'If the email exists, a reset link will be sent' });
-      return;
-    }
-
-    const resetPasswordToken = randomToken();
-    const resetPasswordExpires = new Date(Date.now() + RESET_PASSWORD_EXPIRY_HOURS * 60 * 60 * 1000);
-    user.resetPasswordToken = resetPasswordToken;
-    user.resetPasswordExpires = resetPasswordExpires;
-    await user.save({ validateBeforeSave: false });
-
-    await sendPasswordResetEmail(email, resetPasswordToken);
-    res.json({ success: true, message: 'If the email exists, a reset link will be sent' });
+    res.json({
+      success: true,
+      message: 'Password reset via email is currently disabled.',
+    });
   } catch (e) {
     next(e);
   }

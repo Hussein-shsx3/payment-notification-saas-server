@@ -2,7 +2,6 @@ import { Request, Response, NextFunction } from 'express';
 import { User, PaymentNotification, Notification } from '../models';
 import { AuthRequest } from '../types';
 import { BadRequestError } from '../utils/errors';
-import { sendPaymentNotificationEmail } from '../services/email';
 
 export const createPaymentNotification = async (
   req: AuthRequest,
@@ -10,7 +9,7 @@ export const createPaymentNotification = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { source, title, message, receivedAt, amount, currency } = req.body;
+    const { source, title, message, receivedAt, amount, currency, transactionId } = req.body;
     if (!source || !title || !message) {
       next(new BadRequestError('source, title and message are required'));
       return;
@@ -22,6 +21,21 @@ export const createPaymentNotification = async (
     }
 
     const received = receivedAt ? new Date(receivedAt) : new Date();
+    const user = await User.findById(req.userId).select('_id').lean();
+    if (!user) {
+      res.status(201).json({ success: true, data: null });
+      return;
+    }
+
+    const txId = transactionId ? String(transactionId).trim().toLowerCase() : '';
+    if (txId) {
+      const existing = await PaymentNotification.findOne({ userId: req.userId, transactionId: txId });
+      if (existing) {
+        res.status(201).json({ success: true, data: existing });
+        return;
+      }
+    }
+
     const doc = await PaymentNotification.create({
       userId: req.userId,
       source,
@@ -29,59 +43,274 @@ export const createPaymentNotification = async (
       message,
       amount: parsedAmount,
       currency,
-      forwardedToEmail: false,
+      transactionId: txId ? txId : undefined,
       receivedAt: received,
     });
 
-    const user = await User.findById(req.userId).select('targetEmail email').lean();
+    res.status(201).json({ success: true, data: doc });
+    return;
+  } catch (e) {
+    next(e);
+  }
+};
+
+const _amountRegex = new RegExp(
+  String.raw`(?<!\d)(\d{1,3}(?:[,\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(USD|US\$|ILS|NIS|JOD|JDS|\$|شيكل|دولار)?`,
+  'i'
+);
+const _transactionIdRegex = new RegExp(
+  String.raw`(?:tx(?:n)?|transaction|ref|reference|رقم العملية|رقم المرجع)[\s:#-]*([A-Za-z0-9\-]{4,})`,
+  'i'
+);
+const _senderRegex = new RegExp(
+  String.raw`(?:from|sender|from account|مرسل|من)[\s:]*([A-Za-z0-9 _\-]{3,30})`,
+  'i'
+);
+
+function _containsAny(input: string, terms: string[]): boolean {
+  const lower = input.toLowerCase();
+  for (const t of terms) {
+    if (lower.includes(t.toLowerCase())) return true;
+  }
+  return false;
+}
+
+function _normalizeDigits(input: string): string {
+  const arabicIndic = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
+  const easternArabicIndic = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
+  let out = input;
+  for (let i = 0; i < 10; i++) {
+    out = out.split(arabicIndic[i]).join(String(i));
+    out = out.split(easternArabicIndic[i]).join(String(i));
+  }
+  return out;
+}
+
+function _parseAmount(raw?: string): number | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  let normalized = trimmed.split(' ').join('');
+
+  if (normalized.includes(',') && normalized.includes('.')) {
+    if (normalized.lastIndexOf(',') > normalized.lastIndexOf('.')) {
+      normalized = normalized.split('.').join('').split(',').join('.');
+    } else {
+      normalized = normalized.split(',').join('');
+    }
+  } else if (normalized.includes(',')) {
+    const parts = normalized.split(',');
+    if (parts.length > 2) {
+      normalized = normalized.split(',').join('');
+    } else {
+      const decimalPart = parts[parts.length - 1];
+      normalized =
+        decimalPart.length <= 2 ? normalized.split(',').join('.') : normalized.split(',').join('');
+    }
+  }
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function _detectSource(packageNameLower: string, titleLower: string, messageLower: string, input: string): string | null {
+  if (_containsAny(input, ['palpay', 'pal pay'])) return 'PalPay';
+  if (_containsAny(input, ['jawwal', 'jawwalpay', 'jawwal pay'])) return 'Jawwal Pay';
+  if (_containsAny(input, ['palestine bank', 'bank of palestine', 'bop'])) return 'Palestine Bank';
+
+  const isSmsApp = _containsAny(packageNameLower, [
+    'com.google.android.apps.messaging',
+    'com.samsung.android.messaging',
+    'com.android.mms',
+    'com.android.messaging',
+    'com.miui.mms',
+    'com.huawei.message',
+  ]);
+
+  const hasBankHint = _containsAny(`${titleLower} ${messageLower}`, [
+    'bank',
+    'bop',
+    'palestine bank',
+    'palpay',
+    'jawwal',
+    'payment',
+    'deposit',
+    'amount',
+    'مبلغ',
+    'حساب',
+    'رصيد',
+    'تحويل',
+    'دفعة',
+    'ايداع',
+    'خصم',
+  ]);
+
+  if (isSmsApp && hasBankHint) return 'SMS Payment';
+  return null;
+}
+
+function _isPaymentIntent(input: string): boolean {
+  return _containsAny(input, [
+    'payment',
+    'paid',
+    'payment received',
+    'transfer',
+    'transferred',
+    'deposit',
+    'credited',
+    'debit',
+    'purchase',
+    'transaction successful',
+    'you received',
+    'تم تحويل',
+    'تم استلام',
+    'تم ايداع',
+    'تم خصم',
+    'عملية دفع',
+    'دفعة',
+    'حوالة',
+    'تحويل',
+  ]);
+}
+
+function _isFalsePositive(input: string): boolean {
+  return _containsAny(input, [
+    'otp',
+    'one-time password',
+    'verification code',
+    'verify',
+    'confirm code',
+    'activation code',
+    'security code',
+    'password reset',
+    'login code',
+    'رمز التحقق',
+    'رمز التأكيد',
+    'code:',
+  ]);
+}
+
+function _isExcludedPackage(packageNameLower: string): boolean {
+  return _containsAny(packageNameLower, [
+    'com.whatsapp',
+    'org.telegram',
+    'com.facebook.orca',
+    'com.facebook.katana',
+    'com.instagram.android',
+    'com.snapchat.android',
+    'com.google.android.gm',
+    'com.linkedin.android',
+  ]);
+}
+
+function _parseAndroidPaymentNotification(params: {
+  packageName: string;
+  title: string;
+  message: string;
+  receivedAt: Date;
+}): {
+  source: string;
+  title: string;
+  message: string;
+  amount: number;
+  currency?: string;
+  transactionId?: string;
+} | null {
+  const packageLower = (params.packageName || '').toLowerCase();
+  const titleLower = (params.title || '').toLowerCase();
+  const messageNormalized = _normalizeDigits(params.message || '');
+  const messageLower = messageNormalized.toLowerCase();
+  const haystack = `${packageLower} ${titleLower} ${messageLower}`;
+
+  if (_isExcludedPackage(packageLower)) return null;
+
+  const source = _detectSource(packageLower, titleLower, messageLower, haystack);
+  if (!source) return null;
+  if (_isFalsePositive(haystack)) return null;
+
+  const amountMatch = _amountRegex.exec(messageNormalized);
+  const amount = amountMatch ? _parseAmount(amountMatch[1]) : null;
+  if (amount == null || amount <= 0) return null;
+
+  let currency: string | undefined;
+  if (amountMatch && amountMatch[2]) {
+    const c = amountMatch[2].toUpperCase();
+    if (c === '$' || c === 'US$') currency = 'USD';
+    else if (c === 'JDS') currency = 'JOD';
+    else currency = c;
+  }
+
+  const txMatch = _transactionIdRegex.exec(messageNormalized);
+  const transactionId = txMatch?.[1];
+
+  const fullText = `${titleLower} ${messageLower}`;
+  if (!_isPaymentIntent(fullText)) return null;
+
+  return {
+    source,
+    title: params.title,
+    message: messageNormalized,
+    amount,
+    currency,
+    transactionId: transactionId || undefined,
+  };
+}
+
+export const capturePaymentNotificationFromAndroid = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { packageName, title, message, receivedAt } = req.body ?? {};
+    if (!packageName || !title || !message) {
+      res.status(200).json({ success: false, reason: 'Missing fields' });
+      return;
+    }
+
+    const received = receivedAt ? new Date(receivedAt) : new Date();
+
+    const parsed = _parseAndroidPaymentNotification({
+      packageName: String(packageName),
+      title: String(title),
+      message: String(message),
+      receivedAt: received,
+    });
+
+    if (!parsed) {
+      res.status(200).json({ success: true, data: null, reason: 'Not a payment' });
+      return;
+    }
+
+    const user = await User.findById(req.userId).select('_id').lean();
     if (!user) {
-      res.status(201).json({ success: true, data: doc });
+      res.status(201).json({ success: true, data: null });
       return;
     }
 
-    const destinationEmail = (user.targetEmail || user.email || '').trim();
-    if (!destinationEmail) {
-      const updated = await PaymentNotification.findByIdAndUpdate(
-        doc._id,
-        {
-          forwardedToEmail: false,
-          forwardedEmail: '',
-          emailError: 'No target email configured for this account',
-        },
-        { new: true }
-      );
-      res.status(201).json({ success: true, data: updated ?? doc });
-      return;
+    const txId = parsed.transactionId ? String(parsed.transactionId).trim().toLowerCase() : '';
+
+    if (txId) {
+      const existing = await PaymentNotification.findOne({ userId: req.userId, transactionId: txId });
+      if (existing) {
+        res.status(201).json({ success: true, data: existing });
+        return;
+      }
     }
 
-    try {
-      await sendPaymentNotificationEmail(destinationEmail, source, title, message, received);
-      const updated = await PaymentNotification.findByIdAndUpdate(
-        doc._id,
-        {
-          forwardedToEmail: true,
-          forwardedEmail: destinationEmail,
-          emailSentAt: new Date(),
-          $unset: { emailError: 1 },
-        },
-        { new: true }
-      );
-      res.status(201).json({ success: true, data: updated ?? doc });
-      return;
-    } catch (err) {
-      console.error('Failed to send notification email:', err);
-      const updated = await PaymentNotification.findByIdAndUpdate(
-        doc._id,
-        {
-          forwardedToEmail: false,
-          forwardedEmail: destinationEmail,
-          emailError: err instanceof Error ? err.message : 'Unknown email error',
-        },
-        { new: true }
-      );
-      res.status(201).json({ success: true, data: updated ?? doc });
-      return;
-    }
+    const created = await PaymentNotification.create({
+      userId: req.userId,
+      source: parsed.source,
+      title: parsed.title,
+      message: parsed.message,
+      amount: parsed.amount,
+      currency: parsed.currency,
+      transactionId: txId || undefined,
+      receivedAt: received,
+    });
+
+    res.status(201).json({ success: true, data: created });
+    return;
   } catch (e) {
     next(e);
   }

@@ -29,15 +29,6 @@ export const config = {
     refreshExpiresIn: optional('JWT_REFRESH_EXPIRES_IN', '30d'),
   },
 
-  email: {
-    host: required('EMAIL_HOST'),
-    port: parseInt(optional('EMAIL_PORT', '587'), 10),
-    secure: optional('EMAIL_SECURE', 'false') === 'true',
-    user: required('EMAIL_USER'),
-    password: required('EMAIL_PASSWORD'),
-    from: optional('EMAIL_FROM', 'Payment Notifications <noreply@example.com>'),
-  },
-
   urls: {
     frontend: optional('FRONTEND_URL', 'http://localhost:3000'),
     admin: optional('ADMIN_URL', 'http://localhost:5173'),

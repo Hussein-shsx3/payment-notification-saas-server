@@ -12,5 +12,6 @@ router.get('/payments', notificationController.getPaymentNotifications);
 router.delete('/payments', notificationController.deleteAllPaymentNotifications);
 router.delete('/payments/:id', notificationController.deletePaymentNotification);
 router.put('/:id/read', notificationController.markAsRead);
+router.post('/capture', notificationController.capturePaymentNotificationFromAndroid);
 
 export default router;

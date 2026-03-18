@@ -7,6 +7,7 @@ export interface IPaymentNotification extends Document {
   message: string;
   amount?: number;
   currency?: string;
+  transactionId?: string;
   forwardedToEmail: boolean;
   forwardedEmail?: string;
   emailSentAt?: Date;
@@ -23,6 +24,7 @@ const paymentNotificationSchema = new Schema<IPaymentNotification>(
     message: { type: String, required: true },
     amount: { type: Number },
     currency: { type: String, trim: true, uppercase: true },
+    transactionId: { type: String, trim: true, lowercase: true },
     forwardedToEmail: { type: Boolean, default: false },
     forwardedEmail: { type: String, trim: true, lowercase: true },
     emailSentAt: { type: Date },
@@ -33,6 +35,7 @@ const paymentNotificationSchema = new Schema<IPaymentNotification>(
 );
 
 paymentNotificationSchema.index({ userId: 1, receivedAt: -1 });
+paymentNotificationSchema.index({ userId: 1, transactionId: 1 });
 
 export const PaymentNotification = mongoose.model<IPaymentNotification>(
   'PaymentNotification',

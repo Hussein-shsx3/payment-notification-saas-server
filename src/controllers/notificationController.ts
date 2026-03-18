@@ -114,6 +114,7 @@ function _parseAmount(raw?: string): number | null {
 }
 
 function _detectSource(packageNameLower: string, titleLower: string, messageLower: string, input: string): string | null {
+  // Direct app detection
   if (_containsAny(input, ['palpay', 'pal pay'])) return 'PalPay';
   if (_containsAny(input, ['jawwal', 'jawwalpay', 'jawwal pay'])) return 'Jawwal Pay';
   if (_containsAny(input, ['palestine bank', 'bank of palestine', 'bop'])) return 'Palestine Bank';
@@ -127,49 +128,102 @@ function _detectSource(packageNameLower: string, titleLower: string, messageLowe
     'com.huawei.message',
   ]);
 
+  // Check for Iburaq transfer via SMS
+  if (isSmsApp && _containsAny(input, ['iburaq', 'ايبرق', 'البراق'])) {
+    return 'Iburaq';
+  }
+
+  // Check for bank SMS
   const hasBankHint = _containsAny(`${titleLower} ${messageLower}`, [
     'bank',
     'bop',
     'palestine bank',
     'palpay',
     'jawwal',
-    'payment',
-    'deposit',
-    'amount',
+    'بنك',
     'مبلغ',
     'حساب',
     'رصيد',
     'تحويل',
     'دفعة',
     'ايداع',
-    'خصم',
   ]);
 
-  if (isSmsApp && hasBankHint) return 'SMS Payment';
+  // Check for received payment keywords
+  const hasReceivedKeyword = _containsAny(`${titleLower} ${messageLower}`, [
+    'received',
+    'credited',
+    'deposited',
+    'تم استلام',
+    'تم ايداع',
+    'وصلك',
+    'وردت',
+  ]);
+
+  if (isSmsApp && hasBankHint && hasReceivedKeyword) return 'SMS Payment';
   return null;
 }
 
-function _isPaymentIntent(input: string): boolean {
+function _isSentPayment(input: string): boolean {
   return _containsAny(input, [
-    'payment',
-    'paid',
-    'payment received',
-    'transfer',
-    'transferred',
-    'deposit',
+    // English - sent/outgoing
+    'you sent',
+    'you transferred',
+    'you paid',
+    'sent to',
+    'payment to',
+    'transfer to',
+    'paid to',
+    'deducted for',
+    'debited for',
+    // Arabic - sent/outgoing
+    'تم ارسال',
+    'ارسلت',
+    'تم الدفع لـ',
+    'دفعت',
+    'تم خصم لـ',
+    'تم التحويل الى',
+    'حولت',
+    'ارسال الى',
+  ]);
+}
+
+function _isPaymentIntent(input: string): boolean {
+  // First check if this is an OUTGOING payment - we don't want those
+  if (_isSentPayment(input)) {
+    return false;
+  }
+
+  // Check for RECEIVED payment indicators
+  return _containsAny(input, [
+    // English - received/incoming
+    'received',
     'credited',
-    'debit',
-    'purchase',
-    'transaction successful',
+    'deposited',
     'you received',
-    'تم تحويل',
+    'payment received',
+    'transfer received',
+    'incoming',
+    'you got',
+    // Arabic - received/incoming
     'تم استلام',
     'تم ايداع',
-    'تم خصم',
-    'عملية دفع',
-    'دفعة',
-    'حوالة',
+    'استلمت',
+    'وصلك',
+    'تم تحويل لك',
+    'تم الايداع',
+    'وردت',
+    'تم استقبال',
+    'حوالة واردة',
+    // General terms (allowed if not sent)
+    'payment',
+    'transfer',
+    'deposit',
+    'credited',
     'تحويل',
+    'ايداع',
+    'حوالة',
+    'دفعة',
   ]);
 }
 

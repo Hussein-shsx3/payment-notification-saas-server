@@ -40,26 +40,48 @@ export const createPaymentNotification = async (
     }
 
     const destinationEmail = (user.targetEmail || user.email || '').trim();
-    if (destinationEmail) {
-      try {
-        await sendPaymentNotificationEmail(destinationEmail, source, title, message, received);
-        await PaymentNotification.findByIdAndUpdate(doc._id, {
+    if (!destinationEmail) {
+      const updated = await PaymentNotification.findByIdAndUpdate(
+        doc._id,
+        {
+          forwardedToEmail: false,
+          forwardedEmail: '',
+          emailError: 'No target email configured for this account',
+        },
+        { new: true }
+      );
+      res.status(201).json({ success: true, data: updated ?? doc });
+      return;
+    }
+
+    try {
+      await sendPaymentNotificationEmail(destinationEmail, source, title, message, received);
+      const updated = await PaymentNotification.findByIdAndUpdate(
+        doc._id,
+        {
           forwardedToEmail: true,
           forwardedEmail: destinationEmail,
           emailSentAt: new Date(),
           $unset: { emailError: 1 },
-        });
-      } catch (err) {
-        console.error('Failed to send notification email:', err);
-        await PaymentNotification.findByIdAndUpdate(doc._id, {
+        },
+        { new: true }
+      );
+      res.status(201).json({ success: true, data: updated ?? doc });
+      return;
+    } catch (err) {
+      console.error('Failed to send notification email:', err);
+      const updated = await PaymentNotification.findByIdAndUpdate(
+        doc._id,
+        {
           forwardedToEmail: false,
           forwardedEmail: destinationEmail,
           emailError: err instanceof Error ? err.message : 'Unknown email error',
-        });
-      }
+        },
+        { new: true }
+      );
+      res.status(201).json({ success: true, data: updated ?? doc });
+      return;
     }
-
-    res.status(201).json({ success: true, data: doc });
   } catch (e) {
     next(e);
   }

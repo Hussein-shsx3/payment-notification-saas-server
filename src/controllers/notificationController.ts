@@ -133,7 +133,7 @@ function _detectSource(packageNameLower: string, titleLower: string, messageLowe
     return 'Iburaq';
   }
 
-  // Check for bank SMS
+  // Check for bank/payment SMS
   const hasBankHint = _containsAny(`${titleLower} ${messageLower}`, [
     'bank',
     'bop',
@@ -147,20 +147,13 @@ function _detectSource(packageNameLower: string, titleLower: string, messageLowe
     'تحويل',
     'دفعة',
     'ايداع',
-  ]);
-
-  // Check for received payment keywords
-  const hasReceivedKeyword = _containsAny(`${titleLower} ${messageLower}`, [
+    'استلام',
     'received',
     'credited',
-    'deposited',
-    'تم استلام',
-    'تم ايداع',
-    'وصلك',
-    'وردت',
+    'deposit',
   ]);
 
-  if (isSmsApp && hasBankHint && hasReceivedKeyword) return 'SMS Payment';
+  if (isSmsApp && hasBankHint) return 'SMS Payment';
   return null;
 }
 

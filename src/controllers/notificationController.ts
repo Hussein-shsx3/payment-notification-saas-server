@@ -250,6 +250,24 @@ function _isExcludedPackage(packageNameLower: string): boolean {
   ]);
 }
 
+function _inferSourceFallback(packageNameLower: string, messageLower: string): string | null {
+  if (_containsAny(packageNameLower, ['palpay'])) return 'PalPay';
+  if (_containsAny(packageNameLower, ['jawwal', 'jawwalpay'])) return 'Jawwal Pay';
+  if (_containsAny(packageNameLower, ['bank', 'bop', 'palestine'])) return 'Palestine Bank';
+
+  const isSmsApp = _containsAny(packageNameLower, [
+    'com.google.android.apps.messaging',
+    'com.samsung.android.messaging',
+    'com.android.mms',
+    'com.android.messaging',
+    'com.miui.mms',
+    'com.huawei.message',
+  ]);
+  if (isSmsApp && _containsAny(messageLower, ['iburaq', 'ايبرق', 'البراق'])) return 'Iburaq';
+  if (isSmsApp) return 'SMS Payment';
+  return null;
+}
+
 function _parseAndroidPaymentNotification(params: {
   packageName: string;
   title: string;
@@ -270,14 +288,19 @@ function _parseAndroidPaymentNotification(params: {
   const haystack = `${packageLower} ${titleLower} ${messageLower}`;
 
   if (_isExcludedPackage(packageLower)) return null;
-
-  const source = _detectSource(packageLower, titleLower, messageLower, haystack);
-  if (!source) return null;
   if (_isFalsePositive(haystack)) return null;
+
+  const fullText = `${titleLower} ${messageLower}`;
+  if (!_isPaymentIntent(fullText)) return null;
 
   const amountMatch = _amountRegex.exec(messageNormalized);
   const amount = amountMatch ? _parseAmount(amountMatch[1]) : null;
   if (amount == null || amount <= 0) return null;
+
+  const source = _detectSource(packageLower, titleLower, messageLower, haystack) ||
+    _inferSourceFallback(packageLower, messageLower);
+  if (!source) return null;
+
 
   let currency: string | undefined;
   if (amountMatch && amountMatch[2]) {
@@ -289,9 +312,6 @@ function _parseAndroidPaymentNotification(params: {
 
   const txMatch = _transactionIdRegex.exec(messageNormalized);
   const transactionId = txMatch?.[1];
-
-  const fullText = `${titleLower} ${messageLower}`;
-  if (!_isPaymentIntent(fullText)) return null;
 
   return {
     source,

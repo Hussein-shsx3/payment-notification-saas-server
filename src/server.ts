@@ -4,8 +4,11 @@ import { connectDatabase } from './config/database';
 
 const start = async (): Promise<void> => {
   await connectDatabase();
-  app.listen(config.port, () => {
-    console.log(`Server running on port ${config.port} (${config.env})`);
+  const port = Number(process.env.PORT) || config.port;
+  const host = '0.0.0.0';
+
+  app.listen(port, host, () => {
+    console.log(`Server running on ${host}:${port} (${config.env})`);
   });
 };
 

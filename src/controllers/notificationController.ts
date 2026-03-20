@@ -55,7 +55,11 @@ export const createPaymentNotification = async (
 };
 
 const _amountRegex = new RegExp(
-  String.raw`(?<!\d)(\d{1,3}(?:[,\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(USD|US\$|ILS|NIS|JOD|JDS|\$|شيكل|دولار)?`,
+  String.raw`(?<!\d)(\d{1,3}(?:[,\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(USD|US\$|ILS|NIS|JOD|JDS|\$|₪|شيكل|شيقل|دولار)?`,
+  'i'
+);
+const _amountAfterMablagRegex = new RegExp(
+  String.raw`مبلغ[\s:]*(\d{1,3}(?:[,\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)`,
   'i'
 );
 const _transactionIdRegex = new RegExp(
@@ -117,7 +121,19 @@ function _detectSource(packageNameLower: string, titleLower: string, messageLowe
   // Direct app detection
   if (_containsAny(input, ['palpay', 'pal pay', 'بال باي', 'بالباي'])) return 'PalPay';
   if (_containsAny(input, ['jawwal', 'jawwalpay', 'jawwal pay', 'جوال باي', 'جوال'])) return 'Jawwal Pay';
-  if (_containsAny(input, ['palestine bank', 'bank of palestine', 'bop', 'بنك فلسطين'])) return 'Palestine Bank';
+  if (
+    _containsAny(input, [
+      'palestine bank',
+      'bank of palestine',
+      'bop',
+      'بنك فلسطين',
+      'تحويل بنكي',
+      'تحويل لصديق',
+      'bankofpalestine',
+    ])
+  ) {
+    return 'Palestine Bank';
+  }
 
   const isSmsApp = _containsAny(packageNameLower, [
     'com.google.android.apps.messaging',
@@ -139,6 +155,7 @@ function _detectSource(packageNameLower: string, titleLower: string, messageLowe
     'bop',
     'palestine bank',
     'bank of palestine',
+    'bankofpalestine',
     'palpay',
     'jawwal',
     'بنك',
@@ -148,6 +165,8 @@ function _detectSource(packageNameLower: string, titleLower: string, messageLowe
     'حسابك',
     'رصيد',
     'تحويل',
+    'تحويل بنكي',
+    'تحويل لصديق',
     'دفعة',
     'ايداع',
     'إيداع',
@@ -155,6 +174,8 @@ function _detectSource(packageNameLower: string, titleLower: string, messageLowe
     'استقبال',
     'حوالة',
     'استلام',
+    'عملية',
+    'إشعار',
     'received',
     'credited',
     'deposit',
@@ -187,17 +208,20 @@ function _isSentPayment(input: string): boolean {
     'ارسلت',
     'قمت بارسال',
     'تم الدفع لـ',
+    'تم الدفع إلى',
+    'تم الدفع ل',
     'دفعت',
     'تم خصم لـ',
     'تم التحويل الى',
+    'تم التحويل إلى',
     'حولت',
     'ارسال الى',
+    'إرسال إلى',
     'حوالة صادرة',
     'صادرة من حسابك',
     'تم سحب',
     'سحب',
     'شراء',
-    'تم الدفع',
   ]);
 }
 
@@ -245,6 +269,17 @@ function _isPaymentIntent(input: string): boolean {
     'تم إضافة',
     'إشعار إيداع',
     'اشعار ايداع',
+    'تحويل بنكي',
+    'تحويل لصديق',
+    'تم بنجاح',
+    'بنجاح',
+    'عملية ناجحة',
+    'إشعار عملية',
+    'اشعار عملية',
+    'عملية مالية',
+    'شيكل',
+    'شيقل',
+    'نيس',
     // General terms (allowed if not sent)
     'payment',
     'transfer',
@@ -290,7 +325,9 @@ function _isExcludedPackage(packageNameLower: string): boolean {
 function _inferSourceFallback(packageNameLower: string, messageLower: string): string | null {
   if (_containsAny(packageNameLower, ['palpay'])) return 'PalPay';
   if (_containsAny(packageNameLower, ['jawwal', 'jawwalpay'])) return 'Jawwal Pay';
-  if (_containsAny(packageNameLower, ['bank', 'bop', 'palestine'])) return 'Palestine Bank';
+  if (_containsAny(packageNameLower, ['bank', 'bop', 'palestine', 'bankofpalestine', 'bop.mobile'])) {
+    return 'Palestine Bank';
+  }
 
   const isSmsApp = _containsAny(packageNameLower, [
     'com.google.android.apps.messaging',
@@ -323,6 +360,7 @@ function _parseAndroidPaymentNotification(params: {
   const messageNormalized = _normalizeDigits(params.message || '');
   const messageLower = messageNormalized.toLowerCase();
   const haystack = `${packageLower} ${titleLower} ${messageLower}`;
+  const combinedNormalized = _normalizeDigits(`${params.title || ''}\n${params.message || ''}`);
 
   if (_isExcludedPackage(packageLower)) return null;
   if (_isFalsePositive(haystack)) return null;
@@ -330,7 +368,10 @@ function _parseAndroidPaymentNotification(params: {
   const fullText = `${titleLower} ${messageLower}`;
   if (!_isPaymentIntent(fullText)) return null;
 
-  const amountMatch = _amountRegex.exec(messageNormalized);
+  let amountMatch = _amountRegex.exec(combinedNormalized) ?? _amountRegex.exec(messageNormalized);
+  if (!amountMatch) {
+    amountMatch = _amountAfterMablagRegex.exec(combinedNormalized) ?? _amountAfterMablagRegex.exec(messageNormalized);
+  }
   const amount = amountMatch ? _parseAmount(amountMatch[1]) : null;
   if (amount == null || amount <= 0) return null;
 
@@ -347,7 +388,7 @@ function _parseAndroidPaymentNotification(params: {
     else currency = c;
   }
 
-  const txMatch = _transactionIdRegex.exec(messageNormalized);
+  const txMatch = _transactionIdRegex.exec(combinedNormalized) ?? _transactionIdRegex.exec(messageNormalized);
   const transactionId = txMatch?.[1];
 
   return {

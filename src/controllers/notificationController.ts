@@ -9,7 +9,7 @@ export const createPaymentNotification = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { source, title, message, receivedAt, amount, currency, transactionId } = req.body;
+    const { source, title, message, receivedAt, amount, currency, transactionId, direction } = req.body;
     if (!source || !title || !message) {
       next(new BadRequestError('source, title and message are required'));
       return;
@@ -36,11 +36,15 @@ export const createPaymentNotification = async (
       }
     }
 
+    const dir =
+      direction === 'outgoing' || direction === 'incoming' ? direction : 'incoming';
+
     const doc = await PaymentNotification.create({
       userId: req.userId,
       source,
       title,
       message,
+      direction: dir,
       amount: parsedAmount,
       currency,
       transactionId: txId ? txId : undefined,
@@ -77,6 +81,18 @@ function _containsAny(input: string, terms: string[]): boolean {
     if (lower.includes(t.toLowerCase())) return true;
   }
   return false;
+}
+
+/** Only internal moves between the user's own accounts — not "new" money from outside. */
+function _isInternalAccountTransferOnly(combinedLower: string): boolean {
+  const t = combinedLower;
+  if (t.includes('بين الحسابات') || t.includes('between accounts')) return true;
+  if (t.includes('تحويل بنكي بين الحسابات') || t.includes('تحويل بين الحسابات')) return true;
+  return false;
+}
+
+function _inferPaymentDirection(fullTextLower: string): 'incoming' | 'outgoing' {
+  return _isSentPayment(fullTextLower) ? 'outgoing' : 'incoming';
 }
 
 function _normalizeDigits(input: string): string {
@@ -225,15 +241,10 @@ function _isSentPayment(input: string): boolean {
   ]);
 }
 
+/** Incoming + outgoing + neutral money movement (we exclude only internal account↔account above). */
 function _isPaymentIntent(input: string): boolean {
-  // First check if this is an OUTGOING payment - we don't want those
-  if (_isSentPayment(input)) {
-    return false;
-  }
-
-  // Check for RECEIVED payment indicators
   return _containsAny(input, [
-    // English - received/incoming
+    // English — received
     'received',
     'credited',
     'deposited',
@@ -245,7 +256,23 @@ function _isPaymentIntent(input: string): boolean {
     'account credited',
     'credit alert',
     'cash in',
-    // Arabic - received/incoming
+    // English — sent
+    'you sent',
+    'you transferred',
+    'you paid',
+    'sent to',
+    'payment to',
+    'transfer to',
+    'paid to',
+    'outgoing transfer',
+    'money sent',
+    'transaction sent',
+    'deducted for',
+    'debited for',
+    'debited',
+    'withdrawal',
+    'cash out',
+    // Arabic — received
     'تم استلام',
     'تم ايداع',
     'تم إيداع',
@@ -269,8 +296,28 @@ function _isPaymentIntent(input: string): boolean {
     'تم إضافة',
     'إشعار إيداع',
     'اشعار ايداع',
+    // Arabic — sent
+    'تم ارسال',
+    'ارسلت',
+    'قمت بارسال',
+    'تم الدفع لـ',
+    'تم الدفع إلى',
+    'تم الدفع ل',
+    'دفعت',
+    'تم خصم لـ',
+    'تم التحويل الى',
+    'تم التحويل إلى',
+    'حولت',
+    'ارسال الى',
+    'إرسال إلى',
+    'حوالة صادرة',
+    'صادرة من حسابك',
+    'تم سحب',
+    'سحب',
+    'شراء',
+    // Palestine Bank / local
     'تحويل بنكي',
-    'تحويل لصديق',
+    'تحويل دفع لصديق',
     'تم بنجاح',
     'بنجاح',
     'عملية ناجحة',
@@ -280,7 +327,9 @@ function _isPaymentIntent(input: string): boolean {
     'شيكل',
     'شيقل',
     'نيس',
-    // General terms (allowed if not sent)
+    'موبايل',
+    'بمبلغ',
+    // General
     'payment',
     'transfer',
     'deposit',
@@ -289,6 +338,10 @@ function _isPaymentIntent(input: string): boolean {
     'ايداع',
     'حوالة',
     'دفعة',
+    'مبلغ',
+    'عملية',
+    'wallet',
+    'محفظة',
   ]);
 }
 
@@ -339,7 +392,7 @@ function _inferSourceFallback(packageNameLower: string, messageLower: string): s
   ]);
   if (isSmsApp && _containsAny(messageLower, ['iburaq', 'ايبرق', 'البراق'])) return 'Iburaq';
   if (isSmsApp) return 'SMS Payment';
-  return null;
+  return 'Other';
 }
 
 function _parseAndroidPaymentNotification(params: {
@@ -354,6 +407,7 @@ function _parseAndroidPaymentNotification(params: {
   amount: number;
   currency?: string;
   transactionId?: string;
+  direction: 'incoming' | 'outgoing';
 } | null {
   const packageLower = (params.packageName || '').toLowerCase();
   const titleLower = (params.title || '').toLowerCase();
@@ -365,8 +419,13 @@ function _parseAndroidPaymentNotification(params: {
   if (_isExcludedPackage(packageLower)) return null;
   if (_isFalsePositive(haystack)) return null;
 
+  const combinedLower = combinedNormalized.toLowerCase();
+  if (_isInternalAccountTransferOnly(combinedLower)) return null;
+
   const fullText = `${titleLower} ${messageLower}`;
   if (!_isPaymentIntent(fullText)) return null;
+
+  const direction = _inferPaymentDirection(fullText);
 
   let amountMatch = _amountRegex.exec(combinedNormalized) ?? _amountRegex.exec(messageNormalized);
   if (!amountMatch) {
@@ -375,10 +434,9 @@ function _parseAndroidPaymentNotification(params: {
   const amount = amountMatch ? _parseAmount(amountMatch[1]) : null;
   if (amount == null || amount <= 0) return null;
 
-  const source = _detectSource(packageLower, titleLower, messageLower, haystack) ||
+  const source =
+    _detectSource(packageLower, titleLower, messageLower, haystack) ||
     _inferSourceFallback(packageLower, messageLower);
-  if (!source) return null;
-
 
   let currency: string | undefined;
   if (amountMatch && amountMatch[2]) {
@@ -398,6 +456,7 @@ function _parseAndroidPaymentNotification(params: {
     amount,
     currency,
     transactionId: transactionId || undefined,
+    direction,
   };
 }
 
@@ -448,6 +507,7 @@ export const capturePaymentNotificationFromAndroid = async (
       source: parsed.source,
       title: parsed.title,
       message: parsed.message,
+      direction: parsed.direction,
       amount: parsed.amount,
       currency: parsed.currency,
       transactionId: txId || undefined,

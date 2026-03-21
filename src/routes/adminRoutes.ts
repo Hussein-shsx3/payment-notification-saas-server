@@ -10,6 +10,8 @@ router.use(authenticateAdmin);
 
 router.get('/users', adminController.getUsers);
 router.get('/users/export', adminController.exportUsersCsv);
+router.delete('/users/:userId', adminController.deleteUser);
+router.post('/users/:userId/clear-subscription', adminController.clearUserSubscription);
 router.get('/users/:userId', adminController.getUserDetails);
 router.put('/subscription/:userId', adminController.updateSubscription);
 router.get('/notifications', adminController.getAdminNotifications);

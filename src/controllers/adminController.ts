@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
-import { Admin, User, Notification, SubscriptionPayment } from '../models';
+import { Admin, User, Notification, SubscriptionPayment, PaymentNotification } from '../models';
 import { sendPushNotificationToUser } from '../services/fcm';
 import { BadRequestError, UnauthorizedError, NotFoundError } from '../utils/errors';
 import { generateAdminToken } from '../utils/tokens';
@@ -125,6 +125,74 @@ export const updateSubscription = async (
         periodStart,
         periodEnd,
       });
+    }
+
+    res.json({ success: true, data: user });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const deleteUser = async (
+  req: AdminAuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { userId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      next(new BadRequestError('Invalid user id'));
+      return;
+    }
+
+    const existing = await User.findById(userId).select('_id').lean();
+    if (!existing) {
+      next(new NotFoundError('User not found'));
+      return;
+    }
+
+    await Promise.all([
+      PaymentNotification.deleteMany({ userId }),
+      Notification.deleteMany({ userId }),
+      SubscriptionPayment.deleteMany({ userId }),
+    ]);
+    await User.findByIdAndDelete(userId);
+
+    res.json({ success: true, data: { deleted: true } });
+  } catch (e) {
+    next(e);
+  }
+};
+
+/** Removes subscription dates and pricing from a user (does not delete the account). */
+export const clearUserSubscription = async (
+  req: AdminAuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { userId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      next(new BadRequestError('Invalid user id'));
+      return;
+    }
+
+    const user = await User.findByIdAndUpdate(
+      userId,
+      {
+        $unset: {
+          subscriptionStart: '',
+          subscriptionEnd: '',
+          currentSubscriptionPrice: '',
+          currentSubscriptionCurrency: '',
+        },
+      },
+      { new: true }
+    ).select('-passwordHash -refreshToken -verificationToken -resetPasswordToken');
+
+    if (!user) {
+      next(new NotFoundError('User not found'));
+      return;
     }
 
     res.json({ success: true, data: user });
@@ -292,15 +360,36 @@ export const getStats = async (
 ): Promise<void> => {
   try {
     const now = new Date();
-    const soon = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+    const soon3 = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+    const soon7 = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const thirtyDaysAgo = new Date(now);
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const [totalUsers, activeSubscriptions, expiringSoon, monthlyRegistrations] = await Promise.all([
+    const [
+      totalUsers,
+      activeSubscriptions,
+      expiringSoon,
+      expiringNext7DaysCount,
+      usersNeverSubscribed,
+      signupsLast30Days,
+      monthlyRegistrations,
+      dailySignupsLast30Days,
+      recentSignups,
+      expiringNext7DaysUsers,
+      subscriptionPaymentsLast30Sum,
+    ] = await Promise.all([
       User.countDocuments({}),
       User.countDocuments({ subscriptionEnd: { $gt: now } }),
       User.countDocuments({
-        subscriptionEnd: { $gt: now, $lte: soon },
+        subscriptionEnd: { $gt: now, $lte: soon3 },
       }),
-      // Last 6 months registrations grouped by month
+      User.countDocuments({
+        subscriptionEnd: { $gt: now, $lte: soon7 },
+      }),
+      User.countDocuments({
+        $or: [{ subscriptionEnd: { $exists: false } }, { subscriptionEnd: null }],
+      }),
+      User.countDocuments({ createdAt: { $gte: thirtyDaysAgo } }),
       User.aggregate([
         {
           $match: {
@@ -317,6 +406,32 @@ export const getStats = async (
         },
         { $sort: { '_id.year': 1, '_id.month': 1 } },
       ]),
+      User.aggregate([
+        { $match: { createdAt: { $gte: thirtyDaysAgo } } },
+        {
+          $group: {
+            _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { _id: 1 } },
+      ]),
+      User.find({})
+        .select('fullName email createdAt')
+        .sort({ createdAt: -1 })
+        .limit(8)
+        .lean(),
+      User.find({
+        subscriptionEnd: { $gt: now, $lte: soon7 },
+      })
+        .select('fullName email subscriptionEnd')
+        .sort({ subscriptionEnd: 1 })
+        .limit(8)
+        .lean(),
+      SubscriptionPayment.aggregate([
+        { $match: { createdAt: { $gte: thirtyDaysAgo } } },
+        { $group: { _id: null, total: { $sum: '$amount' } } },
+      ]),
     ]);
 
     const monthlyData = monthlyRegistrations.map((item) => {
@@ -327,13 +442,34 @@ export const getStats = async (
       return { label, year, month, count: item.count as number };
     });
 
+    const dailySignupPoints = dailySignupsLast30Days.map((d) => ({
+      date: d._id as string,
+      count: d.count as number,
+    }));
+
+    const revenue30 =
+      subscriptionPaymentsLast30Sum[0] && typeof (subscriptionPaymentsLast30Sum[0] as { total?: number }).total ===
+      'number'
+        ? (subscriptionPaymentsLast30Sum[0] as { total: number }).total
+        : 0;
+
+    const inactiveSubscriptions = Math.max(0, totalUsers - activeSubscriptions);
+
     res.json({
       success: true,
       data: {
         totalUsers,
         activeSubscriptions,
+        inactiveSubscriptions,
         expiringSoon,
+        expiringNext7DaysCount,
+        usersNeverSubscribed,
+        signupsLast30Days,
         monthlyRegistrations: monthlyData,
+        dailySignupsLast30Days: dailySignupPoints,
+        recentSignups,
+        expiringNext7DaysUsers,
+        subscriptionRevenueLast30Days: revenue30,
       },
     });
   } catch (e) {

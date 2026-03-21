@@ -37,7 +37,9 @@ export const createPaymentNotification = async (
     }
 
     const dir =
-      direction === 'outgoing' || direction === 'incoming' ? direction : 'incoming';
+      direction === 'outgoing' || direction === 'incoming' || direction === 'unknown'
+        ? direction
+        : 'unknown';
 
     const doc = await PaymentNotification.create({
       userId: req.userId,
@@ -91,8 +93,13 @@ function _isInternalAccountTransferOnly(combinedLower: string): boolean {
   return false;
 }
 
-function _inferPaymentDirection(fullTextLower: string): 'incoming' | 'outgoing' {
-  return _isSentPayment(fullTextLower) ? 'outgoing' : 'incoming';
+function _inferPaymentDirection(fullTextLower: string): 'incoming' | 'outgoing' | 'unknown' {
+  const sent = _isSentPayment(fullTextLower);
+  const inc = _isIncomingIndicators(fullTextLower);
+  if (sent && inc) return 'unknown';
+  if (sent) return 'outgoing';
+  if (inc) return 'incoming';
+  return 'unknown';
 }
 
 function _normalizeDigits(input: string): string {
@@ -199,6 +206,53 @@ function _detectSource(packageNameLower: string, titleLower: string, messageLowe
 
   if (isSmsApp && hasBankHint) return 'SMS Payment';
   return null;
+}
+
+/** Stronger cues for money-in (used with sent cues to disambiguate). */
+function _isIncomingIndicators(input: string): boolean {
+  return _containsAny(input, [
+    'received',
+    'credited',
+    'deposited',
+    'you received',
+    'payment received',
+    'transfer received',
+    'incoming',
+    'you got',
+    'account credited',
+    'credit alert',
+    'cash in',
+    'تم استلام',
+    'تم ايداع',
+    'تم إيداع',
+    'استلمت',
+    'وصلك',
+    'تم تحويل لك',
+    'تم الايداع',
+    'تم الإيداع',
+    'وردت',
+    'تم استقبال',
+    'حوالة واردة',
+    'حوالة واردة لحسابك',
+    'واردة لحسابك',
+    'واردة الى حسابك',
+    'واردة إلى حسابك',
+    'تمت إضافة',
+    'تم اضافه',
+    'اضافة الى حسابك',
+    'إضافة إلى حسابك',
+    'تم اضافة',
+    'تم إضافة',
+    'إشعار إيداع',
+    'اشعار ايداع',
+    '- wallet',
+    'wallet',
+    'محفظة',
+    'وارد',
+    'واردة',
+    'للمحفظة',
+    'إلى محفظتك',
+  ]);
 }
 
 function _isSentPayment(input: string): boolean {
@@ -407,7 +461,7 @@ function _parseAndroidPaymentNotification(params: {
   amount: number;
   currency?: string;
   transactionId?: string;
-  direction: 'incoming' | 'outgoing';
+  direction: 'incoming' | 'outgoing' | 'unknown';
 } | null {
   const packageLower = (params.packageName || '').toLowerCase();
   const titleLower = (params.title || '').toLowerCase();
@@ -604,6 +658,33 @@ export const deletePaymentNotification = async (
       return;
     }
     res.json({ success: true, data: { deleted: true } });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const updatePaymentNotificationDirection = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { direction } = req.body ?? {};
+    if (direction !== 'incoming' && direction !== 'outgoing') {
+      next(new BadRequestError('direction must be incoming or outgoing'));
+      return;
+    }
+    const updated = await PaymentNotification.findOneAndUpdate(
+      { _id: id, userId: req.userId },
+      { $set: { direction } },
+      { new: true }
+    ).lean();
+    if (!updated) {
+      next(new BadRequestError('Payment notification not found'));
+      return;
+    }
+    res.json({ success: true, data: updated });
   } catch (e) {
     next(e);
   }

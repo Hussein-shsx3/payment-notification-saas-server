@@ -1,13 +1,13 @@
 import mongoose, { Document, Schema } from 'mongoose';
 
-export type PaymentDirection = 'incoming' | 'outgoing';
+export type PaymentDirection = 'incoming' | 'outgoing' | 'unknown';
 
 export interface IPaymentNotification extends Document {
   userId: mongoose.Types.ObjectId;
   source: string;
   title: string;
   message: string;
-  /** Money in vs money out (best-effort from notification text). */
+  /** Money in vs money out vs unclear (user can fix unknown in the app). */
   direction: PaymentDirection;
   amount?: number;
   currency?: string;
@@ -28,8 +28,8 @@ const paymentNotificationSchema = new Schema<IPaymentNotification>(
     message: { type: String, required: true },
     direction: {
       type: String,
-      enum: ['incoming', 'outgoing'],
-      default: 'incoming',
+      enum: ['incoming', 'outgoing', 'unknown'],
+      default: 'unknown',
     },
     amount: { type: Number },
     currency: { type: String, trim: true, uppercase: true },

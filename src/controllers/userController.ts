@@ -40,10 +40,23 @@ export const getProfile = async (req: AuthRequest, res: Response, next: NextFunc
 
 export const updateProfile = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { fullName, targetEmail } = req.body;
+    const { fullName, targetEmail, phoneNumber } = req.body;
     const allowed: Record<string, string> = {};
-    if (fullName !== undefined) allowed.fullName = fullName;
-    if (targetEmail !== undefined) allowed.targetEmail = targetEmail;
+    if (fullName !== undefined) allowed.fullName = String(fullName).trim();
+    if (targetEmail !== undefined) allowed.targetEmail = String(targetEmail).trim();
+    if (phoneNumber !== undefined) {
+      const p = String(phoneNumber).trim();
+      if (!p) {
+        next(new BadRequestError('phoneNumber cannot be empty'));
+        return;
+      }
+      const taken = await User.findOne({ phoneNumber: p, _id: { $ne: req.userId } }).select('_id').lean();
+      if (taken) {
+        next(new BadRequestError('Phone number already in use'));
+        return;
+      }
+      allowed.phoneNumber = p;
+    }
 
     const user = await User.findByIdAndUpdate(
       req.userId,

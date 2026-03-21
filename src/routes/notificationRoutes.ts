@@ -8,6 +8,7 @@ router.use(authenticate);
 
 router.post('/', requireActiveSubscription, notificationController.createPaymentNotification);
 router.get('/', notificationController.getNotifications);
+router.get('/payments/stats', notificationController.getPaymentStats);
 router.get('/payments', notificationController.getPaymentNotifications);
 router.delete('/payments', notificationController.deleteAllPaymentNotifications);
 router.delete('/payments/:id', notificationController.deletePaymentNotification);

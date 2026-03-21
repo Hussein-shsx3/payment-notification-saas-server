@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import mongoose from 'mongoose';
 import { User, PaymentNotification, Notification } from '../models';
 import { AuthRequest } from '../types';
 import { BadRequestError } from '../utils/errors';
@@ -575,6 +576,81 @@ export const capturePaymentNotificationFromAndroid = async (
   }
 };
 
+export const getPaymentStats = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const userId = new mongoose.Types.ObjectId(req.userId);
+    const now = new Date();
+    const thirtyDaysAgo = new Date(now);
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const [lastPayment, agg, daily] = await Promise.all([
+      PaymentNotification.findOne({ userId: req.userId }).sort({ receivedAt: -1 }).lean(),
+      PaymentNotification.aggregate([
+        { $match: { userId } },
+        {
+          $group: {
+            _id: null,
+            totalAmount: { $sum: { $ifNull: ['$amount', 0] } },
+            count: { $sum: 1 },
+            incoming: { $sum: { $cond: [{ $eq: ['$direction', 'incoming'] }, 1, 0] } },
+            outgoing: { $sum: { $cond: [{ $eq: ['$direction', 'outgoing'] }, 1, 0] } },
+            unknown: { $sum: { $cond: [{ $eq: ['$direction', 'unknown'] }, 1, 0] } },
+          },
+        },
+      ]),
+      PaymentNotification.aggregate([
+        {
+          $match: {
+            userId,
+            receivedAt: { $gte: thirtyDaysAgo },
+          },
+        },
+        {
+          $group: {
+            _id: { $dateToString: { format: '%Y-%m-%d', date: '$receivedAt' } },
+            count: { $sum: 1 },
+            sum: { $sum: { $ifNull: ['$amount', 0] } },
+          },
+        },
+        { $sort: { _id: 1 } },
+      ]),
+    ]);
+
+    const g = agg[0] as
+      | {
+          totalAmount: number;
+          count: number;
+          incoming: number;
+          outgoing: number;
+          unknown: number;
+        }
+      | undefined;
+
+    res.json({
+      success: true,
+      data: {
+        lastPayment,
+        totalCount: g?.count ?? 0,
+        totalAmount: g?.totalAmount ?? 0,
+        incomingCount: g?.incoming ?? 0,
+        outgoingCount: g?.outgoing ?? 0,
+        unknownCount: g?.unknown ?? 0,
+        dailyLast30Days: daily.map((d) => ({
+          date: d._id as string,
+          count: d.count as number,
+          sum: d.sum as number,
+        })),
+      },
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
 export const getPaymentNotifications = async (
   req: AuthRequest,
   res: Response,
@@ -598,6 +674,23 @@ export const getPaymentNotifications = async (
         const to = new Date(toStr);
         if (!isNaN(to.getTime())) (filter.receivedAt as Record<string, Date>).$lte = to;
       }
+    }
+
+    const exportAll = String(req.query.export ?? '').toLowerCase() === 'true';
+    if (exportAll) {
+      const data = await PaymentNotification.find(filter).sort({ receivedAt: -1 }).limit(5000).lean();
+      const total = data.length;
+      res.json({
+        success: true,
+        data: {
+          data,
+          total,
+          page: 1,
+          limit: total,
+          totalPages: 1,
+        },
+      });
+      return;
     }
 
     const [data, total] = await Promise.all([

@@ -45,14 +45,30 @@ export const register = async (req: Request, res: Response, next: NextFunction):
 
 export const login = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { email, password } = req.body;
+    const identifier = String(req.body.email ?? req.body.emailOrPhone ?? '').trim();
+    const { password } = req.body;
 
-    if (!email || !password) {
-      next(new BadRequestError('Email and password are required'));
+    if (!identifier || !password) {
+      next(new BadRequestError('Email or phone and password are required'));
       return;
     }
 
-    const user = await User.findOne({ email }).select('+passwordHash +emailVerified +refreshToken');
+    const query: Record<string, unknown> = identifier.includes('@')
+      ? { email: identifier.toLowerCase() }
+      : {
+          $or: [
+            { phoneNumber: identifier },
+            ...((): Array<{ phoneNumber: string }> => {
+              const digits = identifier.replace(/\D/g, '');
+              if (digits.length >= 6 && digits !== identifier) {
+                return [{ phoneNumber: digits }];
+              }
+              return [];
+            })(),
+          ],
+        };
+
+    const user = await User.findOne(query).select('+passwordHash +emailVerified +refreshToken');
 
     if (!user) {
       next(new UnauthorizedError('Invalid credentials'));

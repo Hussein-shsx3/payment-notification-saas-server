@@ -4,8 +4,34 @@ import { User } from '../models';
 import { BadRequestError, UnauthorizedError, NotFoundError } from '../utils/errors';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken, randomToken } from '../utils/tokens';
 import { config } from '../config';
+import { sendVerificationEmail } from '../services/verificationEmail';
 
 const SALT_ROUNDS = 12;
+const VERIFICATION_TTL_MS = 48 * 60 * 60 * 1000;
+
+async function completeEmailVerification(
+  token: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const t = token.trim();
+  if (!t) {
+    return { ok: false, message: 'Verification token required' };
+  }
+
+  const user = await User.findOne({
+    verificationToken: t,
+    verificationTokenExpires: { $gt: new Date() },
+  }).select('+verificationToken +verificationTokenExpires');
+
+  if (!user) {
+    return { ok: false, message: 'Invalid or expired verification token' };
+  }
+
+  user.emailVerified = true;
+  user.verificationToken = undefined;
+  user.verificationTokenExpires = undefined;
+  await user.save({ validateBeforeSave: false });
+  return { ok: true };
+}
 
 export const register = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
@@ -23,15 +49,22 @@ export const register = async (req: Request, res: Response, next: NextFunction):
     }
 
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+    const emailLower = email.toLowerCase().trim();
+    const verificationToken = randomToken();
+    const verificationTokenExpires = new Date(Date.now() + VERIFICATION_TTL_MS);
 
-    const user = await User.create({
-      fullName,
-      email,
-      phoneNumber,
+    await User.create({
+      fullName: fullName.trim(),
+      email: emailLower,
+      phoneNumber: phoneNumber.trim(),
       passwordHash,
-      targetEmail: email,
-      emailVerified: true,
+      targetEmail: emailLower,
+      emailVerified: false,
+      verificationToken,
+      verificationTokenExpires,
     });
+
+    await sendVerificationEmail(emailLower, verificationToken);
   } catch (e) {
     next(e);
     return;
@@ -39,7 +72,8 @@ export const register = async (req: Request, res: Response, next: NextFunction):
 
   res.status(201).json({
     success: true,
-    message: 'Registration successful.',
+    message: 'Registration successful. Please verify your email.',
+    requiresEmailVerification: true,
   });
 };
 
@@ -78,6 +112,15 @@ export const login = async (req: Request, res: Response, next: NextFunction): Pr
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) {
       next(new UnauthorizedError('Invalid credentials'));
+      return;
+    }
+
+    if (!user.emailVerified) {
+      next(
+        new UnauthorizedError(
+          'Please verify your email before signing in. Check your inbox or tap Resend in the app.'
+        )
+      );
       return;
     }
 
@@ -175,28 +218,67 @@ export const resetPassword = async (req: Request, res: Response, next: NextFunct
 
 export const verifyEmail = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { token } = req.query;
-    if (!token || typeof token !== 'string') {
-      next(new BadRequestError('Verification token required'));
+    const token = typeof req.query.token === 'string' ? req.query.token : '';
+    const result = await completeEmailVerification(token);
+    if (!result.ok) {
+      next(new BadRequestError(result.message));
       return;
     }
-
-    const user = await User.findOne({
-      verificationToken: token,
-      verificationTokenExpires: { $gt: new Date() },
-    }).select('+verificationToken +verificationTokenExpires');
-
-    if (!user) {
-      next(new BadRequestError('Invalid or expired verification token'));
-      return;
-    }
-
-    user.emailVerified = true;
-    user.verificationToken = undefined;
-    user.verificationTokenExpires = undefined;
-    await user.save({ validateBeforeSave: false });
-
     res.json({ success: true, message: 'Email verified successfully' });
+  } catch (e) {
+    next(e);
+  }
+};
+
+/** Same as GET /verify-email but accepts JSON `{ "token": "..." }` — for mobile apps. */
+export const verifyEmailPost = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const token = String(req.body?.token ?? '').trim();
+    const result = await completeEmailVerification(token);
+    if (!result.ok) {
+      next(new BadRequestError(result.message));
+      return;
+    }
+    res.json({ success: true, message: 'Email verified successfully' });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const resendVerification = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { email } = req.body ?? {};
+    const emailLower = String(email ?? '')
+      .trim()
+      .toLowerCase();
+    if (!emailLower) {
+      next(new BadRequestError('Email is required'));
+      return;
+    }
+
+    const user = await User.findOne({ email: emailLower }).select(
+      '+verificationToken +verificationTokenExpires'
+    );
+
+    if (!user || user.emailVerified) {
+      res.json({
+        success: true,
+        message: 'If an account exists and needs verification, an email was sent.',
+      });
+      return;
+    }
+
+    const verificationToken = randomToken();
+    const verificationTokenExpires = new Date(Date.now() + VERIFICATION_TTL_MS);
+    user.verificationToken = verificationToken;
+    user.verificationTokenExpires = verificationTokenExpires;
+    await user.save({ validateBeforeSave: false });
+    await sendVerificationEmail(user.email, verificationToken);
+
+    res.json({
+      success: true,
+      message: 'If an account exists and needs verification, an email was sent.',
+    });
   } catch (e) {
     next(e);
   }

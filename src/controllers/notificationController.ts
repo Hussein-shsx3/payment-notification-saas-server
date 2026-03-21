@@ -375,7 +375,7 @@ function _isExcludedPackage(packageNameLower: string): boolean {
   ]);
 }
 
-function _inferSourceFallback(packageNameLower: string, messageLower: string): string | null {
+function _inferSourceFallback(packageNameLower: string, messageLower: string): string {
   if (_containsAny(packageNameLower, ['palpay'])) return 'PalPay';
   if (_containsAny(packageNameLower, ['jawwal', 'jawwalpay'])) return 'Jawwal Pay';
   if (_containsAny(packageNameLower, ['bank', 'bop', 'palestine', 'bankofpalestine', 'bop.mobile'])) {

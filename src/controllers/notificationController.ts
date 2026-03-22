@@ -764,8 +764,8 @@ export const updatePaymentNotificationDirection = async (
   try {
     const { id } = req.params;
     const { direction } = req.body ?? {};
-    if (direction !== 'incoming' && direction !== 'outgoing') {
-      next(new BadRequestError('direction must be incoming or outgoing'));
+    if (direction !== 'incoming' && direction !== 'outgoing' && direction !== 'unknown') {
+      next(new BadRequestError('direction must be incoming, outgoing, or unknown'));
       return;
     }
     const updated = await PaymentNotification.findOneAndUpdate(

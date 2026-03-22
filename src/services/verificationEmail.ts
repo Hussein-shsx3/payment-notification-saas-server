@@ -2,15 +2,15 @@ import nodemailer from 'nodemailer';
 
 export type VerificationEmailResult = {
   sent: boolean;
-  channel?: 'resend' | 'gmail';
+  channel?: 'gmail';
   /** Short hint for logs / optional client messaging when sent is false */
   detail?: string;
 };
 
 /**
- * Sends verification email: tries Resend first if RESEND_API_KEY + MAIL_FROM are set,
- * then Gmail (GMAIL_USER + GMAIL_APP_PASSWORD) if Resend fails or is not configured.
- * If nothing is configured, logs the link only.
+ * Sends verification email via Gmail SMTP using GMAIL_USER + GMAIL_APP_PASSWORD
+ * (Google Account → Security → 2-Step Verification → App passwords).
+ * Optional MAIL_FROM; defaults to "APP_NAME <GMAIL_USER>".
  */
 export async function sendVerificationEmail(
   toEmail: string,
@@ -28,86 +28,41 @@ export async function sendVerificationEmail(
     `Or open the app → Verify email, and paste this token:\n${token}\n\n` +
     `This link expires in 48 hours.\n`;
 
-  const sendGmail = async (): Promise<boolean> => {
-    const user = process.env.GMAIL_USER?.trim();
-    const pass = process.env.GMAIL_APP_PASSWORD?.replace(/\s/g, '');
-    if (!user || !pass) {
-      return false;
-    }
-    const from =
-      process.env.MAIL_FROM?.trim() || `${appName} <${user}>`;
-    try {
-      const transporter = nodemailer.createTransport({
-        service: 'gmail',
-        auth: { user, pass },
-      });
-      await transporter.sendMail({
-        from,
-        to: toEmail,
-        subject,
-        text,
-      });
-      console.log('[verification-email] sent via Gmail SMTP to', toEmail);
-      return true;
-    } catch (e) {
-      console.error('[verification-email] Gmail SMTP error:', e);
-      return false;
-    }
-  };
+  const user = process.env.GMAIL_USER?.trim();
+  const pass = process.env.GMAIL_APP_PASSWORD?.replace(/\s/g, '');
 
-  const apiKey = process.env.RESEND_API_KEY?.trim();
-  const mailFrom = process.env.MAIL_FROM?.trim();
-
-  if (apiKey && mailFrom) {
-    try {
-      const res = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          from: mailFrom,
-          to: [toEmail],
-          subject,
-          text,
-        }),
-      });
-
-      if (res.ok) {
-        const j = (await res.json().catch(() => ({}))) as { id?: string };
-        console.log('[verification-email] Resend ok, id:', j.id ?? 'n/a', 'to:', toEmail);
-        return { sent: true, channel: 'resend' };
-      }
-
-      const errText = await res.text();
-      console.error('[verification-email] Resend failed', res.status, errText);
-      if (await sendGmail()) {
-        return { sent: true, channel: 'gmail' };
-      }
-      return {
-        sent: false,
-        detail: `Resend error ${res.status}. Check API key, verified domain, and MAIL_FROM format.`,
-      };
-    } catch (e) {
-      console.error('[verification-email] Resend request error:', e);
-      if (await sendGmail()) {
-        return { sent: true, channel: 'gmail' };
-      }
-      return { sent: false, detail: 'Could not reach Resend (network error).' };
-    }
+  if (!user || !pass) {
+    console.warn(
+      '[verification-email] NOT SENT — set GMAIL_USER and GMAIL_APP_PASSWORD (Google App Password, not your normal Gmail password)'
+    );
+    console.log('[verification-email] (dev) would send to:\n', toEmail, '\n', text);
+    return {
+      sent: false,
+      detail: 'Gmail not configured: set GMAIL_USER and GMAIL_APP_PASSWORD on the server.',
+    };
   }
 
-  if (await sendGmail()) {
+  const from = process.env.MAIL_FROM?.trim() || `${appName} <${user}>`;
+
+  try {
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user, pass },
+    });
+    await transporter.sendMail({
+      from,
+      to: toEmail,
+      subject,
+      text,
+    });
+    console.log('[verification-email] sent via Gmail SMTP to', toEmail);
     return { sent: true, channel: 'gmail' };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('[verification-email] Gmail SMTP error:', e);
+    return {
+      sent: false,
+      detail: `Gmail send failed: ${msg}`,
+    };
   }
-
-  console.warn(
-    '[verification-email] NOT SENT — set RESEND_API_KEY + MAIL_FROM (Resend) and/or GMAIL_USER + GMAIL_APP_PASSWORD (Gmail)'
-  );
-  console.log('[verification-email] (dev) would send to:\n', toEmail, '\n', text);
-  return {
-    sent: false,
-    detail: 'Email not configured on server (missing RESEND or Gmail env vars).',
-  };
 }

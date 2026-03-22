@@ -48,6 +48,9 @@ export async function sendVerificationEmail(
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: { user, pass },
+      connectionTimeout: 15_000,
+      greetingTimeout: 15_000,
+      socketTimeout: 25_000,
     });
     await transporter.sendMail({
       from,

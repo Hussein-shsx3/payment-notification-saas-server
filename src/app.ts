@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import { config } from './config';
-import { getResendHealth } from './services/verificationEmail';
+import { getBrevoEmailHealth } from './services/verificationEmail';
 import routes from './routes';
 import { errorHandler, notFound } from './middleware';
 
@@ -16,22 +16,17 @@ app.use(cookieParser());
 
 const emailStatusHandler = (_req: express.Request, res: express.Response): void => {
   const apiPublic = (process.env.API_PUBLIC_URL ?? '').trim();
-  const h = getResendHealth();
-  const sandbox =
-    h.fromEmail === 'onboarding@resend.dev'
-      ? 'With onboarding@resend.dev, Resend only delivers to your Resend login email until you verify a domain (resend.com/domains).'
-      : undefined;
+  const h = getBrevoEmailHealth();
   res.json({
-    resendApiKeySet: h.resendApiKeySet,
-    resendFromSet: h.resendFromSet,
-    fromEmail: h.fromEmail,
-    fromProblem: h.fromProblem,
+    brevoApiKeySet: h.brevoApiKeySet,
+    senderConfigured: h.senderConfigured,
+    senderEmail: h.senderEmail,
+    problem: h.problem,
     apiPublicUrlSet: apiPublic.length > 0,
-    resendReady: h.resendReady,
-    resendSandboxNote: sandbox,
-    note: h.resendReady
-      ? sandbox ?? 'Verification email is sent via Resend.'
-      : h.fromProblem ?? 'Fix Resend configuration.',
+    brevoReady: h.ready,
+    note: h.ready
+      ? 'Verification email is sent via Brevo.'
+      : h.problem ?? 'Fix Brevo configuration.',
   });
 };
 

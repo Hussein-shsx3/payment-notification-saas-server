@@ -2,7 +2,7 @@ import './loadEnv';
 import app from './app';
 import { config } from './config';
 import { connectDatabase } from './config/database';
-import { getResendHealth } from './services/verificationEmail';
+import { getBrevoEmailHealth } from './services/verificationEmail';
 
 const start = async (): Promise<void> => {
   await connectDatabase();
@@ -11,11 +11,11 @@ const start = async (): Promise<void> => {
 
   app.listen(port, host, () => {
     console.log(`Server running on ${host}:${port} (${config.env})`);
-    const h = getResendHealth();
-    if (h.resendReady) {
-      console.log('[email] Resend OK — verification emails enabled (from', h.fromEmail + ')');
+    const h = getBrevoEmailHealth();
+    if (h.ready) {
+      console.log('[email] Brevo OK — verification emails enabled (from', h.senderEmail + ')');
     } else {
-      console.warn('[email] Verification emails will fail:', h.fromProblem ?? 'incomplete env');
+      console.warn('[email] Verification emails will fail:', h.problem ?? 'incomplete env');
     }
   });
 };

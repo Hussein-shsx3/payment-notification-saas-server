@@ -137,7 +137,7 @@ export const login = async (req: Request, res: Response, next: NextFunction): Pr
     if (!user.emailVerified) {
       next(
         new UnauthorizedError(
-          'Please verify your email before signing in. Check your inbox or tap Resend in the app.'
+          'Please verify your email before signing in. Check your inbox or request a new verification email in the app.'
         )
       );
       return;

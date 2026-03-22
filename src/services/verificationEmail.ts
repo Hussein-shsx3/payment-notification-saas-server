@@ -17,97 +17,70 @@ function buildMail(token: string): { subject: string; text: string } {
   return { subject, text };
 }
 
-/** "From" — `RESEND_FROM` preferred; `MAIL_FROM` allowed as alias. */
-function resendFromAddress(): string | undefined {
-  return process.env.RESEND_FROM?.trim() || process.env.MAIL_FROM?.trim();
-}
+/** Sender must match a verified sender in Brevo (SMTP & API). */
+function getBrevoSender(): { name: string; email: string } | null {
+  const emailDirect = process.env.BREVO_SENDER_EMAIL?.trim();
+  const nameDefault = process.env.BREVO_SENDER_NAME?.trim() || process.env.APP_NAME?.trim() || 'App';
+  const combined = process.env.BREVO_FROM?.trim() || process.env.MAIL_FROM?.trim();
 
-/** Parse `Name <addr@domain.com>` or plain email. */
-export function parseFromEmail(from: string): string {
-  const m = from.trim().match(/<([^>]+)>/);
-  if (m) return m[1].trim().toLowerCase();
-  return from.trim().toLowerCase();
-}
-
-/**
- * Resend only sends from `onboarding@resend.dev` (testing) or a domain you verify in their dashboard.
- * You cannot use Gmail/Yahoo/etc. as the From address.
- */
-export function resendFromProblem(fromEmail: string): string | null {
-  const e = fromEmail.toLowerCase();
-  if (e === 'onboarding@resend.dev') return null;
-  if (e.endsWith('.resend.dev')) return null;
-
-  const publicInbox = [
-    'gmail.com',
-    'googlemail.com',
-    'yahoo.com',
-    'outlook.com',
-    'hotmail.com',
-    'icloud.com',
-    'live.com',
-    'proton.me',
-    'protonmail.com',
-    'aol.com',
-  ];
-  const domain = e.split('@')[1];
-  if (domain && publicInbox.includes(domain)) {
-    return `From address ${fromEmail} cannot be used with Resend — use RESEND_FROM=onboarding@resend.dev or verify your own domain at resend.com (not Gmail/public inboxes).`;
+  if (emailDirect) {
+    return { name: nameDefault, email: emailDirect };
+  }
+  if (combined) {
+    const angle = combined.match(/^(.+?)\s*<([^>]+)>$/);
+    if (angle) {
+      return { name: angle[1].trim(), email: angle[2].trim() };
+    }
+    if (combined.includes('@')) {
+      return { name: nameDefault, email: combined };
+    }
   }
   return null;
 }
 
-export type ResendHealth = {
-  resendApiKeySet: boolean;
-  resendFromSet: boolean;
-  fromEmail: string | null;
-  /** Non-null means sending will fail until fixed */
-  fromProblem: string | null;
-  resendReady: boolean;
+export type BrevoEmailHealth = {
+  brevoApiKeySet: boolean;
+  senderConfigured: boolean;
+  senderEmail: string | null;
+  problem: string | null;
+  ready: boolean;
 };
 
-export function getResendHealth(): ResendHealth {
-  const apiKey = !!process.env.RESEND_API_KEY?.trim();
-  const raw = resendFromAddress();
+export function getBrevoEmailHealth(): BrevoEmailHealth {
+  const apiKey = !!process.env.BREVO_API_KEY?.trim();
+  const sender = getBrevoSender();
 
   if (!apiKey) {
     return {
-      resendApiKeySet: false,
-      resendFromSet: !!raw,
-      fromEmail: raw ? parseFromEmail(raw) : null,
-      fromProblem: 'Set RESEND_API_KEY',
-      resendReady: false,
+      brevoApiKeySet: false,
+      senderConfigured: !!sender,
+      senderEmail: sender?.email ?? null,
+      problem: 'Set BREVO_API_KEY (Brevo → SMTP & API → API keys)',
+      ready: false,
     };
   }
-  if (!raw) {
+  if (!sender) {
     return {
-      resendApiKeySet: true,
-      resendFromSet: false,
-      fromEmail: null,
-      fromProblem: 'Set RESEND_FROM (e.g. onboarding@resend.dev)',
-      resendReady: false,
+      brevoApiKeySet: true,
+      senderConfigured: false,
+      senderEmail: null,
+      problem: 'Set BREVO_SENDER_EMAIL or BREVO_FROM / MAIL_FROM (verified sender in Brevo)',
+      ready: false,
     };
   }
 
-  const fromEmail = parseFromEmail(raw);
-  const domainProblem = resendFromProblem(fromEmail);
-  const resendReady = !domainProblem;
   return {
-    resendApiKeySet: true,
-    resendFromSet: true,
-    fromEmail,
-    fromProblem: domainProblem,
-    resendReady,
+    brevoApiKeySet: true,
+    senderConfigured: true,
+    senderEmail: sender.email,
+    problem: null,
+    ready: true,
   };
 }
 
-export function isResendConfigured(): boolean {
-  return getResendHealth().resendReady;
-}
-
-function parseResendErrorBody(text: string): string {
+function parseBrevoError(text: string): string {
   try {
-    const j = JSON.parse(text) as { message?: string; name?: string };
+    const j = JSON.parse(text) as { message?: string };
     if (j.message) return j.message;
   } catch {
     /* ignore */
@@ -116,58 +89,53 @@ function parseResendErrorBody(text: string): string {
 }
 
 /**
- * Sends verification email via [Resend](https://resend.com).
+ * Sends verification email via [Brevo](https://www.brevo.com) transactional API.
+ * @see https://developers.brevo.com/reference/sendtransacemail
  */
 export async function sendVerificationEmail(
   toEmail: string,
   token: string
 ): Promise<VerificationEmailResult> {
   const { subject, text } = buildMail(token);
-  const apiKey = process.env.RESEND_API_KEY?.trim();
-  const from = resendFromAddress();
+  const apiKey = process.env.BREVO_API_KEY?.trim();
+  const sender = getBrevoSender();
 
-  if (!apiKey || !from) {
-    console.warn('[mail] Resend not configured — set RESEND_API_KEY and RESEND_FROM');
+  if (!apiKey || !sender) {
+    console.warn('[mail] Brevo not configured — set BREVO_API_KEY and BREVO_SENDER_EMAIL (or BREVO_FROM)');
     return {
       sent: false,
-      detail: 'Set RESEND_API_KEY and RESEND_FROM (see https://resend.com)',
+      detail: 'Set BREVO_API_KEY and sender (see https://www.brevo.com)',
     };
   }
 
-  const fromEmail = parseFromEmail(from);
-  const problem = resendFromProblem(fromEmail);
-  if (problem) {
-    console.error('[mail]', problem);
-    return { sent: false, detail: problem };
-  }
+  console.log('[mail] Brevo →', toEmail, 'from', sender.email);
 
-  console.log('[mail] Resend →', toEmail, 'from', fromEmail);
-
-  const res = await fetch('https://api.resend.com/emails', {
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'api-key': apiKey,
     },
     body: JSON.stringify({
-      from,
-      to: [toEmail],
+      sender: { name: sender.name, email: sender.email },
+      to: [{ email: toEmail }],
       subject,
-      text,
+      textContent: text,
     }),
   });
 
   if (res.ok) {
-    const j = (await res.json().catch(() => ({}))) as { id?: string };
-    console.log('[mail] Resend ok id=', j.id ?? 'n/a');
+    const j = (await res.json().catch(() => ({}))) as { messageId?: string };
+    console.log('[mail] Brevo ok messageId=', j.messageId ?? 'n/a');
     return { sent: true };
   }
 
   const errText = await res.text();
-  const parsed = parseResendErrorBody(errText);
-  console.error('[mail] Resend HTTP', res.status, parsed);
+  const parsed = parseBrevoError(errText);
+  console.error('[mail] Brevo HTTP', res.status, parsed);
   return {
     sent: false,
-    detail: `Resend ${res.status}: ${parsed}`,
+    detail: `Brevo ${res.status}: ${parsed}`,
   };
 }

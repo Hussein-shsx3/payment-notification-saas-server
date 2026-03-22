@@ -24,6 +24,10 @@ router.delete('/users/:userId', adminController.deleteUser);
 router.post('/users/:userId/clear-subscription', adminController.clearUserSubscription);
 router.post('/users/:userId/send-verification-email', adminController.sendUserVerificationEmail);
 router.patch('/users/:userId/email-verification', adminController.setUserEmailVerification);
+router.patch(
+  '/users/:userId/subscription-payment-proof/review',
+  adminController.setSubscriptionPaymentProofReviewed
+);
 router.get('/users/:userId', adminController.getUserDetails);
 router.put('/subscription/:userId', adminController.updateSubscription);
 router.get('/notifications', adminController.getAdminNotifications);

@@ -22,6 +22,13 @@ export interface IUser extends Document {
   /** Set when we sent the \"2 days before expiry\" in-app reminder for this subscriptionEnd. */
   subscriptionExpiryReminderSentFor?: Date;
   lastSubscriptionWarningSentAt?: Date;
+  /** Screenshot / proof of subscription payment (Cloudinary URL). */
+  subscriptionPaymentProofUrl?: string;
+  /** Cloudinary public_id for replacing or deleting the proof image. */
+  subscriptionPaymentProofPublicId?: string;
+  subscriptionPaymentProofUploadedAt?: Date;
+  /** Set when an admin marks the current proof as reviewed (cleared on new upload). */
+  subscriptionPaymentProofReviewedAt?: Date;
   refreshToken?: string;
   createdAt: Date;
   updatedAt: Date;
@@ -45,6 +52,10 @@ const userSchema = new Schema<IUser>(
     targetEmail: { type: String, trim: true }, // defaults to email in pre-save
     subscriptionExpiryReminderSentFor: { type: Date },
     lastSubscriptionWarningSentAt: { type: Date },
+    subscriptionPaymentProofUrl: { type: String, trim: true },
+    subscriptionPaymentProofPublicId: { type: String, trim: true, select: false },
+    subscriptionPaymentProofUploadedAt: { type: Date },
+    subscriptionPaymentProofReviewedAt: { type: Date },
     refreshToken: { type: String, select: false },
   },
   { timestamps: true }

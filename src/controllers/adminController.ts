@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 import { Admin, User, Notification, SubscriptionPayment, PaymentNotification } from '../models';
 import { sendPushNotificationToUser } from '../services/fcm';
+import { destroySubscriptionProofImage } from '../services/cloudinarySubscriptionProof';
 import { BadRequestError, UnauthorizedError, NotFoundError } from '../utils/errors';
 import { generateAdminToken, randomVerificationCode } from '../utils/tokens';
 import { sendVerificationEmail } from '../services/verificationEmail';
@@ -129,6 +130,67 @@ export const updateSubscription = async (
       });
     }
 
+    const endStr = periodEnd.toISOString().slice(0, 10);
+    const startStr = periodStart.toISOString().slice(0, 10);
+    const notifTitle = 'Subscription updated';
+    const notifMessage = `Your subscription has been updated. It is active from ${startStr} to ${endStr} (UTC).`;
+    await Notification.create({
+      userId: user._id,
+      title: notifTitle,
+      message: notifMessage,
+      type: 'system',
+    });
+    await sendPushNotificationToUser(userId, { title: notifTitle, body: notifMessage });
+
+    res.json({ success: true, data: user });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const setSubscriptionPaymentProofReviewed = async (
+  req: AdminAuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { userId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      next(new BadRequestError('Invalid user id'));
+      return;
+    }
+    const { reviewed } = req.body as { reviewed?: boolean };
+    if (reviewed !== true && reviewed !== false) {
+      next(new BadRequestError('reviewed must be true or false'));
+      return;
+    }
+
+    const existing = await User.findById(userId).select('subscriptionPaymentProofUrl').lean();
+    if (!existing) {
+      next(new NotFoundError('User not found'));
+      return;
+    }
+    const hasProof = !!(existing.subscriptionPaymentProofUrl && String(existing.subscriptionPaymentProofUrl).trim());
+    if (!hasProof) {
+      next(new BadRequestError('This user has no payment proof image'));
+      return;
+    }
+
+    const user = await User.findByIdAndUpdate(
+      userId,
+      reviewed
+        ? { $set: { subscriptionPaymentProofReviewedAt: new Date() } }
+        : { $unset: { subscriptionPaymentProofReviewedAt: '' } },
+      { new: true }
+    ).select(
+      '-passwordHash -refreshToken -verificationToken -verificationTokenExpires -resetPasswordToken -resetPasswordExpires -subscriptionPaymentProofPublicId'
+    );
+
+    if (!user) {
+      next(new NotFoundError('User not found'));
+      return;
+    }
+
     res.json({ success: true, data: user });
   } catch (e) {
     next(e);
@@ -147,10 +209,14 @@ export const deleteUser = async (
       return;
     }
 
-    const existing = await User.findById(userId).select('_id').lean();
+    const existing = await User.findById(userId).select('+subscriptionPaymentProofPublicId').lean();
     if (!existing) {
       next(new NotFoundError('User not found'));
       return;
+    }
+
+    if (existing.subscriptionPaymentProofPublicId) {
+      await destroySubscriptionProofImage(existing.subscriptionPaymentProofPublicId);
     }
 
     await Promise.all([
@@ -179,6 +245,11 @@ export const clearUserSubscription = async (
       return;
     }
 
+    const before = await User.findById(userId).select('+subscriptionPaymentProofPublicId').lean();
+    if (before?.subscriptionPaymentProofPublicId) {
+      await destroySubscriptionProofImage(before.subscriptionPaymentProofPublicId);
+    }
+
     const user = await User.findByIdAndUpdate(
       userId,
       {
@@ -188,6 +259,10 @@ export const clearUserSubscription = async (
           currentSubscriptionPrice: '',
           currentSubscriptionCurrency: '',
           subscriptionExpiryReminderSentFor: '',
+          subscriptionPaymentProofUrl: '',
+          subscriptionPaymentProofPublicId: '',
+          subscriptionPaymentProofUploadedAt: '',
+          subscriptionPaymentProofReviewedAt: '',
         },
       },
       { new: true }
@@ -214,7 +289,7 @@ export const getUserDetails = async (
 
     const user = await User.findById(userId)
       .select(
-        '-passwordHash -refreshToken -verificationToken -verificationTokenExpires -resetPasswordToken -resetPasswordExpires'
+        '-passwordHash -refreshToken -verificationToken -verificationTokenExpires -resetPasswordToken -resetPasswordExpires -subscriptionPaymentProofPublicId'
       )
       .lean();
 
@@ -494,6 +569,7 @@ export const getStats = async (
       recentSignups,
       expiringNext7DaysUsers,
       subscriptionPaymentsLast30Sum,
+      recentSubscriptionPaymentProofs,
     ] = await Promise.all([
       User.countDocuments({}),
       User.countDocuments({ subscriptionEnd: { $gt: now } }),
@@ -549,6 +625,15 @@ export const getStats = async (
         { $match: { createdAt: { $gte: thirtyDaysAgo } } },
         { $group: { _id: null, total: { $sum: '$amount' } } },
       ]),
+      User.find({
+        subscriptionPaymentProofUrl: { $exists: true, $nin: [null, ''] },
+      })
+        .select(
+          '_id fullName email subscriptionPaymentProofUrl subscriptionPaymentProofUploadedAt subscriptionPaymentProofReviewedAt'
+        )
+        .sort({ subscriptionPaymentProofUploadedAt: -1 })
+        .limit(8)
+        .lean(),
     ]);
 
     const monthlyData = monthlyRegistrations.map((item) => {
@@ -587,6 +672,7 @@ export const getStats = async (
         recentSignups,
         expiringNext7DaysUsers,
         subscriptionRevenueLast30Days: revenue30,
+        recentSubscriptionPaymentProofs,
       },
     });
   } catch (e) {

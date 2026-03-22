@@ -4,6 +4,11 @@ import { User } from '../models';
 import { AuthRequest } from '../types';
 import { BadRequestError, NotFoundError } from '../utils/errors';
 import { getPasswordPolicyMessage } from '../utils/passwordPolicy';
+import {
+  destroySubscriptionProofImage,
+  isCloudinaryConfigured,
+  uploadSubscriptionProofImage,
+} from '../services/cloudinarySubscriptionProof';
 
 const SALT_ROUNDS = 12;
 
@@ -72,6 +77,66 @@ export const updateProfile = async (req: AuthRequest, res: Response, next: NextF
     res.json({
       success: true,
       data: toProfileResponse(user.toObject() as unknown as Record<string, unknown>),
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const uploadSubscriptionPaymentProof = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    if (!isCloudinaryConfigured()) {
+      next(new BadRequestError('Payment proof upload is not configured on the server (Cloudinary)'));
+      return;
+    }
+    const file = (req as AuthRequest & { file?: Express.Multer.File }).file;
+    if (!file?.buffer) {
+      next(new BadRequestError('Image file is required (use field name: image)'));
+      return;
+    }
+
+    const existing = await User.findById(req.userId).select('+subscriptionPaymentProofPublicId');
+    if (!existing) {
+      next(new NotFoundError('User not found'));
+      return;
+    }
+
+    const oldPublicId = existing.subscriptionPaymentProofPublicId;
+    const { url, publicId } = await uploadSubscriptionProofImage(file.buffer);
+    if (oldPublicId) {
+      await destroySubscriptionProofImage(oldPublicId);
+    }
+
+    const updated = await User.findByIdAndUpdate(
+      req.userId,
+      {
+        $set: {
+          subscriptionPaymentProofUrl: url,
+          subscriptionPaymentProofPublicId: publicId,
+          subscriptionPaymentProofUploadedAt: new Date(),
+        },
+        $unset: { subscriptionPaymentProofReviewedAt: '' },
+      },
+      { new: true, runValidators: true }
+    ).select(
+      '-passwordHash -refreshToken -verificationToken -verificationTokenExpires -resetPasswordToken -resetPasswordExpires -subscriptionPaymentProofPublicId'
+    );
+
+    if (!updated) {
+      next(new NotFoundError('User not found'));
+      return;
+    }
+
+    const plain = updated.toObject() as unknown as Record<string, unknown>;
+    delete plain.subscriptionPaymentProofPublicId;
+
+    res.json({
+      success: true,
+      data: toProfileResponse(plain),
     });
   } catch (e) {
     next(e);

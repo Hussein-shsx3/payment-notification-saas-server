@@ -4,7 +4,9 @@ import bcrypt from 'bcryptjs';
 import { Admin, User, Notification, SubscriptionPayment, PaymentNotification } from '../models';
 import { sendPushNotificationToUser } from '../services/fcm';
 import { BadRequestError, UnauthorizedError, NotFoundError } from '../utils/errors';
-import { generateAdminToken } from '../utils/tokens';
+import { generateAdminToken, randomVerificationCode } from '../utils/tokens';
+import { sendVerificationEmail } from '../services/verificationEmail';
+import { VERIFICATION_TTL_MS } from '../constants/verification';
 
 const SALT_ROUNDS = 12;
 
@@ -649,6 +651,80 @@ export const runSubscriptionMaintenance = async (
         warningsCreated,
       },
     });
+  } catch (e) {
+    next(e);
+  }
+};
+
+/** Generate a new 6-digit code and email it (Brevo). */
+export const sendUserVerificationEmail = async (
+  req: AdminAuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { userId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      next(new BadRequestError('Invalid user id'));
+      return;
+    }
+    const locale: 'en' | 'ar' = req.body?.locale === 'ar' ? 'ar' : 'en';
+    const user = await User.findById(userId);
+    if (!user) {
+      next(new NotFoundError('User not found'));
+      return;
+    }
+    if (user.emailVerified) {
+      next(new BadRequestError('User email is already verified'));
+      return;
+    }
+    const code = randomVerificationCode();
+    user.verificationToken = code;
+    user.verificationTokenExpires = new Date(Date.now() + VERIFICATION_TTL_MS);
+    await user.save({ validateBeforeSave: false });
+    const emailResult = await sendVerificationEmail(user.email, code, locale);
+    res.json({
+      success: true,
+      verificationEmailSent: emailResult.sent,
+      detail: emailResult.detail ?? null,
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
+/** Manually set verification status (clears pending code when marking verified). */
+export const setUserEmailVerification = async (
+  req: AdminAuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { userId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      next(new BadRequestError('Invalid user id'));
+      return;
+    }
+    const { emailVerified } = req.body as { emailVerified?: unknown };
+    if (typeof emailVerified !== 'boolean') {
+      next(new BadRequestError('emailVerified (boolean) is required'));
+      return;
+    }
+    const user = await User.findById(userId);
+    if (!user) {
+      next(new NotFoundError('User not found'));
+      return;
+    }
+    user.emailVerified = emailVerified;
+    user.verificationToken = undefined;
+    user.verificationTokenExpires = undefined;
+    await user.save({ validateBeforeSave: false });
+    const updated = await User.findById(userId)
+      .select(
+        '-passwordHash -refreshToken -verificationToken -verificationTokenExpires -resetPasswordToken -resetPasswordExpires'
+      )
+      .lean();
+    res.json({ success: true, data: updated });
   } catch (e) {
     next(e);
   }

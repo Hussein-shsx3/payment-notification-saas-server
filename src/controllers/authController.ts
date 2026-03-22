@@ -2,20 +2,21 @@ import { Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
 import { User } from '../models';
 import { BadRequestError, UnauthorizedError, NotFoundError } from '../utils/errors';
-import { generateAccessToken, generateRefreshToken, verifyRefreshToken, randomToken } from '../utils/tokens';
+import { generateAccessToken, generateRefreshToken, verifyRefreshToken, randomVerificationCode } from '../utils/tokens';
+import { normalizeVerificationInput } from '../utils/verificationInput';
 import { config } from '../config';
 import { sendVerificationEmail } from '../services/verificationEmail';
 import { getPasswordPolicyMessage } from '../utils/passwordPolicy';
+import { VERIFICATION_TTL_MS } from '../constants/verification';
 
 const SALT_ROUNDS = 12;
-const VERIFICATION_TTL_MS = 48 * 60 * 60 * 1000;
 
 async function completeEmailVerification(
-  token: string
+  rawInput: string
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  const t = token.trim();
+  const t = normalizeVerificationInput(rawInput);
   if (!t) {
-    return { ok: false, message: 'Verification token required' };
+    return { ok: false, message: 'Verification code required' };
   }
 
   const user = await User.findOne({
@@ -24,7 +25,7 @@ async function completeEmailVerification(
   }).select('+verificationToken +verificationTokenExpires');
 
   if (!user) {
-    return { ok: false, message: 'Invalid or expired verification token' };
+    return { ok: false, message: 'Invalid or expired verification code' };
   }
 
   user.emailVerified = true;
@@ -57,7 +58,8 @@ export const register = async (req: Request, res: Response, next: NextFunction):
 
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
     const emailLower = email.toLowerCase().trim();
-    const verificationToken = randomToken();
+    const locale: 'en' | 'ar' = req.body?.locale === 'ar' || req.body?.language === 'ar' ? 'ar' : 'en';
+    const verificationToken = randomVerificationCode();
     const verificationTokenExpires = new Date(Date.now() + VERIFICATION_TTL_MS);
 
     await User.create({
@@ -73,7 +75,7 @@ export const register = async (req: Request, res: Response, next: NextFunction):
 
     // Defer to next event loop so the HTTP response is fully flushed first (Render / proxies).
     setImmediate(() => {
-      void sendVerificationEmail(emailLower, verificationToken)
+      void sendVerificationEmail(emailLower, verificationToken, locale)
         .then((emailResult) => {
           if (!emailResult.sent) {
             console.error('[register] Verification email not sent:', emailResult.detail ?? 'unknown');
@@ -243,8 +245,12 @@ export const resetPassword = async (req: Request, res: Response, next: NextFunct
 
 export const verifyEmail = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const token = typeof req.query.token === 'string' ? req.query.token : '';
-    const result = await completeEmailVerification(token);
+    const q = req.query;
+    const raw =
+      (typeof q.code === 'string' && q.code) ||
+      (typeof q.token === 'string' && q.token) ||
+      '';
+    const result = await completeEmailVerification(raw);
     if (!result.ok) {
       next(new BadRequestError(result.message));
       return;
@@ -255,11 +261,11 @@ export const verifyEmail = async (req: Request, res: Response, next: NextFunctio
   }
 };
 
-/** Same as GET /verify-email but accepts JSON `{ "token": "..." }` — for mobile apps. */
+/** JSON `{ "code": "123456" }` or `{ "token": "..." }` (legacy). */
 export const verifyEmailPost = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const token = String(req.body?.token ?? '').trim();
-    const result = await completeEmailVerification(token);
+    const raw = String(req.body?.code ?? req.body?.token ?? '').trim();
+    const result = await completeEmailVerification(raw);
     if (!result.ok) {
       next(new BadRequestError(result.message));
       return;
@@ -293,12 +299,13 @@ export const resendVerification = async (req: Request, res: Response, next: Next
       return;
     }
 
-    const verificationToken = randomToken();
+    const locale: 'en' | 'ar' = req.body?.locale === 'ar' || req.body?.language === 'ar' ? 'ar' : 'en';
+    const verificationToken = randomVerificationCode();
     const verificationTokenExpires = new Date(Date.now() + VERIFICATION_TTL_MS);
     user.verificationToken = verificationToken;
     user.verificationTokenExpires = verificationTokenExpires;
     await user.save({ validateBeforeSave: false });
-    const emailResult = await sendVerificationEmail(user.email, verificationToken);
+    const emailResult = await sendVerificationEmail(user.email, verificationToken, locale);
     if (!emailResult.sent) {
       console.error('[resend-verification] Email not sent:', emailResult.detail ?? 'unknown');
     }

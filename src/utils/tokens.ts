@@ -36,3 +36,8 @@ export const verifyRefreshToken = (token: string): JwtPayload => {
 };
 
 export const randomToken = (): string => crypto.randomBytes(32).toString('hex');
+
+/** 6-digit numeric code (may start with 0). */
+export function randomVerificationCode(): string {
+  return crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
+}

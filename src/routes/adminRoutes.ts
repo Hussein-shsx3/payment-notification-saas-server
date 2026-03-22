@@ -21,6 +21,8 @@ router.put('/users/:userId/payments/:paymentId', adminController.updateSubscript
 router.delete('/users/:userId/payments/:paymentId', adminController.deleteSubscriptionPayment);
 router.delete('/users/:userId', adminController.deleteUser);
 router.post('/users/:userId/clear-subscription', adminController.clearUserSubscription);
+router.post('/users/:userId/send-verification-email', adminController.sendUserVerificationEmail);
+router.patch('/users/:userId/email-verification', adminController.setUserEmailVerification);
 router.get('/users/:userId', adminController.getUserDetails);
 router.put('/subscription/:userId', adminController.updateSubscription);
 router.get('/notifications', adminController.getAdminNotifications);

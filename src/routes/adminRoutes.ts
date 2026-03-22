@@ -5,6 +5,13 @@ import * as adminController from '../controllers/adminController';
 const router = Router();
 
 router.post('/login', adminController.login);
+// GET must not fall through to authenticateAdmin (would 401). Browsers prefetch/open as GET.
+router.get('/login', (_req, res) => {
+  res.status(405).set('Allow', 'POST').json({
+    success: false,
+    message: 'Use POST /api/admin/login with JSON body: { "email", "password" }',
+  });
+});
 
 router.use(authenticateAdmin);
 

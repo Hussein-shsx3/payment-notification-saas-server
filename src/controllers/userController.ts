@@ -9,6 +9,7 @@ import {
   isCloudinaryConfigured,
   uploadSubscriptionProofImage,
 } from '../services/cloudinarySubscriptionProof';
+import { optimizePaymentProofImage } from '../services/optimizePaymentProofImage';
 
 const SALT_ROUNDS = 12;
 
@@ -106,7 +107,8 @@ export const uploadSubscriptionPaymentProof = async (
     }
 
     const oldPublicId = existing.subscriptionPaymentProofPublicId;
-    const { url, publicId } = await uploadSubscriptionProofImage(file.buffer);
+    const optimized = await optimizePaymentProofImage(file.buffer);
+    const { url, publicId } = await uploadSubscriptionProofImage(optimized);
     if (oldPublicId) {
       await destroySubscriptionProofImage(oldPublicId);
     }

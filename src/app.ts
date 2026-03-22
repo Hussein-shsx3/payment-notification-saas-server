@@ -16,6 +16,18 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true, timestamp: new Date().toISOString() });
 });
 
+/** Debug: confirms Gmail env is visible to the process (no secrets exposed). */
+app.get('/health/email', (_req, res) => {
+  const u = process.env.GMAIL_USER?.trim() ?? '';
+  const pass = (process.env.GMAIL_APP_PASSWORD ?? '').replace(/\s/g, '');
+  res.json({
+    gmailUserSet: u.length > 0,
+    appPasswordLength: pass.length,
+    expectedAppPasswordLength: 16,
+    looksConfigured: u.length > 0 && pass.length === 16,
+  });
+});
+
 app.use('/api', routes);
 
 app.use(notFound);

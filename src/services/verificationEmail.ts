@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import type SMTPTransport from 'nodemailer/lib/smtp-transport';
 
 export type VerificationEmailResult = {
   sent: boolean;
@@ -31,9 +32,55 @@ function resolveFromHeader(appName: string, gmailUser: string): string {
   return `${appName} <${gmailUser}>`;
 }
 
+const timeouts = {
+  connectionTimeout: 20_000,
+  greetingTimeout: 20_000,
+  socketTimeout: 30_000,
+};
+
+async function sendMailWithTransporter(
+  transporter: nodemailer.Transporter<SMTPTransport.SentMessageInfo>,
+  mail: { from: string; to: string; subject: string; text: string }
+): Promise<SMTPTransport.SentMessageInfo> {
+  return transporter.sendMail(mail);
+}
+
+/**
+ * Gmail on some networks blocks 465; try 587 STARTTLS as fallback.
+ */
+async function sendViaGmailSmtp(
+  user: string,
+  pass: string,
+  mail: { from: string; to: string; subject: string; text: string }
+): Promise<SMTPTransport.SentMessageInfo> {
+  const common = {
+    host: 'smtp.gmail.com',
+    auth: { user, pass },
+    ...timeouts,
+  } as const;
+
+  const try465 = nodemailer.createTransport({
+    ...common,
+    port: 465,
+    secure: true,
+  });
+
+  try {
+    return await sendMailWithTransporter(try465, mail);
+  } catch (first) {
+    console.warn('[verification-email] SMTP 465 failed, trying 587 STARTTLS:', first);
+    const try587 = nodemailer.createTransport({
+      ...common,
+      port: 587,
+      secure: false,
+      requireTLS: true,
+    });
+    return sendMailWithTransporter(try587, mail);
+  }
+}
+
 /**
  * Sends verification email via Gmail SMTP (GMAIL_USER + GMAIL_APP_PASSWORD).
- * Uses explicit smtp.gmail.com:465 — often more reliable on cloud hosts than `service: 'gmail'`.
  */
 export async function sendVerificationEmail(
   toEmail: string,
@@ -52,7 +99,8 @@ export async function sendVerificationEmail(
     `This link expires in 48 hours.\n`;
 
   const user = process.env.GMAIL_USER?.trim();
-  const pass = process.env.GMAIL_APP_PASSWORD?.replace(/\s/g, '');
+  const passRaw = process.env.GMAIL_APP_PASSWORD ?? '';
+  const pass = passRaw.replace(/\s/g, '');
 
   if (!user || !pass) {
     console.warn(
@@ -65,20 +113,16 @@ export async function sendVerificationEmail(
     };
   }
 
+  if (pass.length !== 16) {
+    console.error(
+      `[verification-email] GMAIL_APP_PASSWORD should be 16 characters after removing spaces; got length ${pass.length}. Check .env — use double quotes if the value has spaces, e.g. GMAIL_APP_PASSWORD="abcd efgh ijkl mnop"`
+    );
+  }
+
   const from = resolveFromHeader(appName, user);
 
   try {
-    const transporter = nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 465,
-      secure: true,
-      auth: { user, pass },
-      connectionTimeout: 20_000,
-      greetingTimeout: 20_000,
-      socketTimeout: 30_000,
-    });
-
-    const info = await transporter.sendMail({
+    const info = await sendViaGmailSmtp(user, pass, {
       from,
       to: toEmail,
       subject,
@@ -88,7 +132,7 @@ export async function sendVerificationEmail(
     return { sent: true, channel: 'gmail' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.error('[verification-email] Gmail SMTP error:', e);
+    console.error('[verification-email] Gmail SMTP error (465 and 587):', e);
     return {
       sent: false,
       detail: `Gmail send failed: ${msg}`,

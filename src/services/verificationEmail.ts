@@ -24,6 +24,16 @@ function esc(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
+/** Site origin only — strip trailing `/app` so we do not build `/app/app/verify-email`. */
+function normalizeFrontendBase(raw: string): string {
+  let u = raw.trim().replace(/\/+$/, '');
+  if (u.endsWith('/app')) {
+    u = u.slice(0, -4);
+    u = u.replace(/\/+$/, '');
+  }
+  return u;
+}
+
 function buildVerificationBodies(
   toEmail: string,
   code: string,
@@ -31,7 +41,7 @@ function buildVerificationBodies(
 ): { subject: string; textContent: string; htmlContent: string } {
   const apiBase = (process.env.API_PUBLIC_URL || 'http://localhost:5000/api').replace(/\/$/, '');
   const verifyApiUrl = `${apiBase}/auth/verify-email?code=${encodeURIComponent(code)}`;
-  const webBase = (process.env.FRONTEND_URL || config.urls.frontend).replace(/\/$/, '');
+  const webBase = normalizeFrontendBase(process.env.FRONTEND_URL || config.urls.frontend);
   const verifyWebUrl = `${webBase}/app/verify-email?email=${encodeURIComponent(toEmail)}`;
   const appName = process.env.APP_NAME || 'Payment Notify';
 
@@ -154,8 +164,12 @@ export type BrevoEmailHealth = {
   ready: boolean;
 };
 
+function brevoApiKey(): string | undefined {
+  return process.env.BREVO_API_KEY?.trim() || process.env.SENDINBLUE_API_KEY?.trim();
+}
+
 export function getBrevoEmailHealth(): BrevoEmailHealth {
-  const apiKey = !!process.env.BREVO_API_KEY?.trim();
+  const apiKey = !!brevoApiKey();
   const sender = getBrevoSender();
 
   if (!apiKey) {
@@ -163,7 +177,7 @@ export function getBrevoEmailHealth(): BrevoEmailHealth {
       brevoApiKeySet: false,
       senderConfigured: !!sender,
       senderEmail: sender?.email ?? null,
-      problem: 'Set BREVO_API_KEY (Brevo → SMTP & API → API keys)',
+      problem: 'Set BREVO_API_KEY or SENDINBLUE_API_KEY (Brevo → SMTP & API → API keys)',
       ready: false,
     };
   }
@@ -205,7 +219,7 @@ export async function sendVerificationEmail(
   locale: 'en' | 'ar' = 'en'
 ): Promise<VerificationEmailResult> {
   const { subject, textContent, htmlContent } = buildVerificationBodies(toEmail, code, locale);
-  const apiKey = process.env.BREVO_API_KEY?.trim();
+  const apiKey = brevoApiKey();
   const sender = getBrevoSender();
 
   if (!apiKey || !sender) {
@@ -216,7 +230,7 @@ export async function sendVerificationEmail(
     };
   }
 
-  console.log('[mail] Brevo →', toEmail);
+  console.log('[mail] Brevo →', toEmail, 'from', sender.email);
 
   const res = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
@@ -242,9 +256,15 @@ export async function sendVerificationEmail(
 
   const errText = await res.text();
   const parsed = parseBrevoError(errText);
-  console.error('[mail] Brevo HTTP', res.status, parsed);
+  console.error('[mail] Brevo HTTP', res.status, parsed, '| raw:', errText.slice(0, 300));
+  const hint =
+    res.status === 401 || res.status === 403
+      ? ' Check API key and that the key has permission to send emails.'
+      : /sender|not valid|unverified|domain/i.test(parsed + errText)
+        ? ' Verify BREVO_SENDER_EMAIL (or domain) under Brevo → Senders & IP.'
+        : '';
   return {
     sent: false,
-    detail: `Brevo ${res.status}: ${parsed}`,
+    detail: `Brevo ${res.status}: ${parsed}${hint}`,
   };
 }

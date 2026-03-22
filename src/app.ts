@@ -16,6 +16,12 @@ app.use(cookieParser());
 
 const emailStatusHandler = (_req: express.Request, res: express.Response): void => {
   const apiPublic = (process.env.API_PUBLIC_URL ?? '').trim();
+  const feRaw = (process.env.FRONTEND_URL ?? '').trim();
+  let feHint: string | undefined;
+  if (feRaw && /\/app\/?$/i.test(feRaw)) {
+    feHint =
+      'FRONTEND_URL should be the site origin only (no /app). Example: https://your-app.vercel.app — code strips /app if present.';
+  }
   const h = getBrevoEmailHealth();
   res.json({
     brevoApiKeySet: h.brevoApiKeySet,
@@ -23,6 +29,8 @@ const emailStatusHandler = (_req: express.Request, res: express.Response): void 
     senderEmail: h.senderEmail,
     problem: h.problem,
     apiPublicUrlSet: apiPublic.length > 0,
+    frontendUrlSet: feRaw.length > 0,
+    frontendUrlHint: feHint,
     brevoReady: h.ready,
     note: h.ready
       ? 'Verification email is sent via Brevo.'

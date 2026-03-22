@@ -17,6 +17,8 @@ router.use(authenticateAdmin);
 
 router.get('/users', adminController.getUsers);
 router.get('/users/export', adminController.exportUsersCsv);
+router.put('/users/:userId/payments/:paymentId', adminController.updateSubscriptionPayment);
+router.delete('/users/:userId/payments/:paymentId', adminController.deleteSubscriptionPayment);
 router.delete('/users/:userId', adminController.deleteUser);
 router.post('/users/:userId/clear-subscription', adminController.clearUserSubscription);
 router.get('/users/:userId', adminController.getUserDetails);

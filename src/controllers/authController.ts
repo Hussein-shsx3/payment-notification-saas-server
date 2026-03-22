@@ -71,17 +71,21 @@ export const register = async (req: Request, res: Response, next: NextFunction):
       verificationTokenExpires,
     });
 
-    await sendVerificationEmail(emailLower, verificationToken);
+    const emailResult = await sendVerificationEmail(emailLower, verificationToken);
+    if (!emailResult.sent) {
+      console.error('[register] Verification email not sent:', emailResult.detail ?? 'unknown');
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Registration successful. Please verify your email.',
+      requiresEmailVerification: true,
+      verificationEmailSent: emailResult.sent,
+    });
   } catch (e) {
     next(e);
     return;
   }
-
-  res.status(201).json({
-    success: true,
-    message: 'Registration successful. Please verify your email.',
-    requiresEmailVerification: true,
-  });
 };
 
 export const login = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -286,11 +290,15 @@ export const resendVerification = async (req: Request, res: Response, next: Next
     user.verificationToken = verificationToken;
     user.verificationTokenExpires = verificationTokenExpires;
     await user.save({ validateBeforeSave: false });
-    await sendVerificationEmail(user.email, verificationToken);
+    const emailResult = await sendVerificationEmail(user.email, verificationToken);
+    if (!emailResult.sent) {
+      console.error('[resend-verification] Email not sent:', emailResult.detail ?? 'unknown');
+    }
 
     res.json({
       success: true,
       message: 'If an account exists and needs verification, an email was sent.',
+      verificationEmailSent: emailResult.sent,
     });
   } catch (e) {
     next(e);

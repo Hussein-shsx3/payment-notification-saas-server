@@ -236,6 +236,120 @@ export const getUserDetails = async (
   }
 };
 
+export const updateSubscriptionPayment = async (
+  req: AdminAuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { userId, paymentId } = req.params;
+    const { amount, currency, periodStart, periodEnd } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(userId) || !mongoose.Types.ObjectId.isValid(paymentId)) {
+      next(new BadRequestError('Invalid user or payment id'));
+      return;
+    }
+
+    const uid = new mongoose.Types.ObjectId(userId);
+    const existing = await SubscriptionPayment.findOne({ _id: paymentId, userId: uid });
+    if (!existing) {
+      next(new NotFoundError('Subscription payment not found'));
+      return;
+    }
+
+    const updates: Partial<{ amount: number; currency: string; periodStart: Date; periodEnd: Date }> = {};
+
+    if (amount !== undefined) {
+      const n = typeof amount === 'number' ? amount : Number(amount);
+      if (!Number.isFinite(n) || n < 0) {
+        next(new BadRequestError('amount must be a non-negative number'));
+        return;
+      }
+      updates.amount = n;
+    }
+    if (currency !== undefined) {
+      const c = String(currency).trim();
+      if (!c) {
+        next(new BadRequestError('currency cannot be empty'));
+        return;
+      }
+      updates.currency = c;
+    }
+    if (periodStart !== undefined) {
+      const d = new Date(periodStart);
+      if (Number.isNaN(d.getTime())) {
+        next(new BadRequestError('Invalid periodStart'));
+        return;
+      }
+      updates.periodStart = d;
+    }
+    if (periodEnd !== undefined) {
+      const d = new Date(periodEnd);
+      if (Number.isNaN(d.getTime())) {
+        next(new BadRequestError('Invalid periodEnd'));
+        return;
+      }
+      updates.periodEnd = d;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      next(
+        new BadRequestError('No fields to update: provide amount, currency, periodStart, and/or periodEnd')
+      );
+      return;
+    }
+
+    const nextStart = updates.periodStart ?? existing.periodStart;
+    const nextEnd = updates.periodEnd ?? existing.periodEnd;
+    if (nextStart >= nextEnd) {
+      next(new BadRequestError('periodStart must be before periodEnd'));
+      return;
+    }
+
+    const updated = await SubscriptionPayment.findByIdAndUpdate(
+      paymentId,
+      { $set: updates },
+      { new: true }
+    ).lean();
+
+    if (!updated) {
+      next(new NotFoundError('Subscription payment not found'));
+      return;
+    }
+
+    res.json({ success: true, data: updated });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const deleteSubscriptionPayment = async (
+  req: AdminAuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { userId, paymentId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(userId) || !mongoose.Types.ObjectId.isValid(paymentId)) {
+      next(new BadRequestError('Invalid user or payment id'));
+      return;
+    }
+
+    const existing = await SubscriptionPayment.findOneAndDelete({
+      _id: paymentId,
+      userId: new mongoose.Types.ObjectId(userId),
+    });
+    if (!existing) {
+      next(new NotFoundError('Subscription payment not found'));
+      return;
+    }
+
+    res.json({ success: true, data: { deleted: true } });
+  } catch (e) {
+    next(e);
+  }
+};
+
 export const exportUsersCsv = async (
   _req: AdminAuthRequest,
   res: Response,

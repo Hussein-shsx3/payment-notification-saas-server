@@ -1,5 +1,5 @@
 /**
- * Must be imported before any module reads process.env (especially GMAIL_*).
+ * Must be imported before any module reads process.env.
  * Render injects env vars at runtime — local dev uses server/.env
  */
 import dotenv from 'dotenv';

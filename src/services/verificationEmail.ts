@@ -3,14 +3,37 @@ import nodemailer from 'nodemailer';
 export type VerificationEmailResult = {
   sent: boolean;
   channel?: 'gmail';
-  /** Short hint for logs / optional client messaging when sent is false */
   detail?: string;
 };
 
 /**
- * Sends verification email via Gmail SMTP using GMAIL_USER + GMAIL_APP_PASSWORD
- * (Google Account → Security → 2-Step Verification → App passwords).
- * Optional MAIL_FROM; defaults to "APP_NAME <GMAIL_USER>".
+ * Resolves a valid Gmail "from" header. Gmail SMTP only accepts the authenticated
+ * account (GMAIL_USER); a mismatched MAIL_FROM is ignored with a warning.
+ */
+function resolveFromHeader(appName: string, gmailUser: string): string {
+  const raw = process.env.MAIL_FROM?.trim();
+  const normalizedUser = gmailUser.toLowerCase();
+
+  if (!raw) {
+    return `${appName} <${gmailUser}>`;
+  }
+
+  const angle = raw.match(/^(.+?)\s*<([^>]+)>$/);
+  const emailInFrom = (angle ? angle[2] : raw).trim().toLowerCase();
+
+  if (emailInFrom === normalizedUser) {
+    return angle ? raw : `${appName} <${gmailUser}>`;
+  }
+
+  console.warn(
+    '[verification-email] MAIL_FROM does not match GMAIL_USER — using authenticated address as sender'
+  );
+  return `${appName} <${gmailUser}>`;
+}
+
+/**
+ * Sends verification email via Gmail SMTP (GMAIL_USER + GMAIL_APP_PASSWORD).
+ * Uses explicit smtp.gmail.com:465 — often more reliable on cloud hosts than `service: 'gmail'`.
  */
 export async function sendVerificationEmail(
   toEmail: string,
@@ -42,23 +65,26 @@ export async function sendVerificationEmail(
     };
   }
 
-  const from = process.env.MAIL_FROM?.trim() || `${appName} <${user}>`;
+  const from = resolveFromHeader(appName, user);
 
   try {
     const transporter = nodemailer.createTransport({
-      service: 'gmail',
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
       auth: { user, pass },
-      connectionTimeout: 15_000,
-      greetingTimeout: 15_000,
-      socketTimeout: 25_000,
+      connectionTimeout: 20_000,
+      greetingTimeout: 20_000,
+      socketTimeout: 30_000,
     });
-    await transporter.sendMail({
+
+    const info = await transporter.sendMail({
       from,
       to: toEmail,
       subject,
       text,
     });
-    console.log('[verification-email] sent via Gmail SMTP to', toEmail);
+    console.log('[verification-email] Gmail SMTP ok messageId=', info.messageId ?? 'n/a', 'to=', toEmail);
     return { sent: true, channel: 'gmail' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import { config } from './config';
-import { isResendConfigured } from './services/verificationEmail';
+import { getResendHealth } from './services/verificationEmail';
 import routes from './routes';
 import { errorHandler, notFound } from './middleware';
 
@@ -16,15 +16,22 @@ app.use(cookieParser());
 
 const emailStatusHandler = (_req: express.Request, res: express.Response): void => {
   const apiPublic = (process.env.API_PUBLIC_URL ?? '').trim();
-  const resendReady = isResendConfigured();
+  const h = getResendHealth();
+  const sandbox =
+    h.fromEmail === 'onboarding@resend.dev'
+      ? 'With onboarding@resend.dev, Resend only delivers to your Resend login email until you verify a domain (resend.com/domains).'
+      : undefined;
   res.json({
-    resendApiKeySet: !!process.env.RESEND_API_KEY?.trim(),
-    resendFromSet: !!(process.env.RESEND_FROM?.trim() || process.env.MAIL_FROM?.trim()),
+    resendApiKeySet: h.resendApiKeySet,
+    resendFromSet: h.resendFromSet,
+    fromEmail: h.fromEmail,
+    fromProblem: h.fromProblem,
     apiPublicUrlSet: apiPublic.length > 0,
-    resendReady,
-    note: resendReady
-      ? 'Verification email is sent via Resend.'
-      : 'Set RESEND_API_KEY and RESEND_FROM (e.g. onboarding@resend.dev) from resend.com',
+    resendReady: h.resendReady,
+    resendSandboxNote: sandbox,
+    note: h.resendReady
+      ? sandbox ?? 'Verification email is sent via Resend.'
+      : h.fromProblem ?? 'Fix Resend configuration.',
   });
 };
 

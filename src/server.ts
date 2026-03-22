@@ -2,7 +2,7 @@ import './loadEnv';
 import app from './app';
 import { config } from './config';
 import { connectDatabase } from './config/database';
-import { isResendConfigured } from './services/verificationEmail';
+import { getResendHealth } from './services/verificationEmail';
 
 const start = async (): Promise<void> => {
   await connectDatabase();
@@ -11,10 +11,11 @@ const start = async (): Promise<void> => {
 
   app.listen(port, host, () => {
     console.log(`Server running on ${host}:${port} (${config.env})`);
-    if (isResendConfigured()) {
-      console.log('[email] Resend configured — verification emails enabled.');
+    const h = getResendHealth();
+    if (h.resendReady) {
+      console.log('[email] Resend OK — verification emails enabled (from', h.fromEmail + ')');
     } else {
-      console.warn('[email] Verification emails disabled — set RESEND_API_KEY + RESEND_FROM');
+      console.warn('[email] Verification emails will fail:', h.fromProblem ?? 'incomplete env');
     }
   });
 };

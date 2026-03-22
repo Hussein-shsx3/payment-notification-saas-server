@@ -197,6 +197,60 @@ export const setSubscriptionPaymentProofReviewed = async (
   }
 };
 
+/** Deletes subscription payment proof image only (Cloudinary + user fields). */
+export const deleteSubscriptionPaymentProof = async (
+  req: AdminAuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { userId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      next(new BadRequestError('Invalid user id'));
+      return;
+    }
+
+    const before = await User.findById(userId).select('+subscriptionPaymentProofPublicId').lean();
+    if (!before) {
+      next(new NotFoundError('User not found'));
+      return;
+    }
+    const hasProof = !!(before.subscriptionPaymentProofUrl && String(before.subscriptionPaymentProofUrl).trim());
+    if (!hasProof) {
+      next(new BadRequestError('No payment proof to delete'));
+      return;
+    }
+
+    if (before.subscriptionPaymentProofPublicId) {
+      await destroySubscriptionProofImage(before.subscriptionPaymentProofPublicId);
+    }
+
+    const user = await User.findByIdAndUpdate(
+      userId,
+      {
+        $unset: {
+          subscriptionPaymentProofUrl: '',
+          subscriptionPaymentProofPublicId: '',
+          subscriptionPaymentProofUploadedAt: '',
+          subscriptionPaymentProofReviewedAt: '',
+        },
+      },
+      { new: true }
+    ).select(
+      '-passwordHash -refreshToken -verificationToken -verificationTokenExpires -resetPasswordToken -resetPasswordExpires -subscriptionPaymentProofPublicId'
+    );
+
+    if (!user) {
+      next(new NotFoundError('User not found'));
+      return;
+    }
+
+    res.json({ success: true, data: user });
+  } catch (e) {
+    next(e);
+  }
+};
+
 export const deleteUser = async (
   req: AdminAuthRequest,
   res: Response,

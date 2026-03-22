@@ -28,6 +28,10 @@ router.patch(
   '/users/:userId/subscription-payment-proof/review',
   adminController.setSubscriptionPaymentProofReviewed
 );
+router.delete(
+  '/users/:userId/subscription-payment-proof',
+  adminController.deleteSubscriptionPaymentProof
+);
 router.get('/users/:userId', adminController.getUserDetails);
 router.put('/subscription/:userId', adminController.updateSubscription);
 router.get('/notifications', adminController.getAdminNotifications);

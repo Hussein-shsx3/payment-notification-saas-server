@@ -292,9 +292,12 @@ export const resendVerification = async (req: Request, res: Response, next: Next
     );
 
     if (!user || user.emailVerified) {
+      // Do not set verificationEmailSent — client must not treat this as "email delivered"
+      // (same response whether unknown email or already verified; avoids account enumeration).
       res.json({
         success: true,
-        message: 'If an account exists and needs verification, an email was sent.',
+        message:
+          'If this address is registered and still needs verification, use Resend again after checking the email is correct.',
       });
       return;
     }
@@ -308,11 +311,13 @@ export const resendVerification = async (req: Request, res: Response, next: Next
     const emailResult = await sendVerificationEmail(user.email, verificationToken, locale);
     if (!emailResult.sent) {
       console.error('[resend-verification] Email not sent:', emailResult.detail ?? 'unknown');
+    } else {
+      console.log('[resend-verification] Brevo accepted for', user.email);
     }
 
     res.json({
       success: true,
-      message: 'If an account exists and needs verification, an email was sent.',
+      message: 'Verification email sent. Check your inbox and spam folder.',
       verificationEmailSent: emailResult.sent,
     });
   } catch (e) {

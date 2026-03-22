@@ -3,6 +3,7 @@ import app from './app';
 import { config } from './config';
 import { connectDatabase } from './config/database';
 import { getBrevoEmailHealth } from './services/verificationEmail';
+import { runSubscriptionExpiryReminders } from './services/subscriptionReminderJob';
 
 const start = async (): Promise<void> => {
   await connectDatabase();
@@ -17,6 +18,15 @@ const start = async (): Promise<void> => {
     } else {
       console.warn('[email] Verification emails will fail:', h.problem ?? 'incomplete env');
     }
+
+    const sixHoursMs = 6 * 60 * 60 * 1000;
+    const runReminders = (): void => {
+      void runSubscriptionExpiryReminders().catch((err) => {
+        console.error('[subscription-reminders]', err);
+      });
+    };
+    setTimeout(runReminders, 60_000);
+    setInterval(runReminders, sixHoursMs);
   });
 };
 

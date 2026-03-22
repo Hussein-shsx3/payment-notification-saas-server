@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authenticateAdmin } from '../middleware';
 import * as adminController from '../controllers/adminController';
+import * as adminSupportController from '../controllers/adminSupportController';
 
 const router = Router();
 
@@ -26,6 +27,9 @@ router.patch('/users/:userId/email-verification', adminController.setUserEmailVe
 router.get('/users/:userId', adminController.getUserDetails);
 router.put('/subscription/:userId', adminController.updateSubscription);
 router.get('/notifications', adminController.getAdminNotifications);
+router.get('/support/messages', adminSupportController.listAllSupportMessages);
+router.get('/support/users/:userId/thread', adminSupportController.listThreadForUser);
+router.post('/support/users/:userId/reply', adminSupportController.replyAsAdmin);
 router.post('/broadcast', adminController.broadcast);
 router.get('/stats', adminController.getStats);
 router.post('/subscription-maintenance', adminController.runSubscriptionMaintenance);

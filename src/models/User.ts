@@ -19,6 +19,8 @@ export interface IUser extends Document {
    * Detailed history is stored in SubscriptionPayment documents.
    */
   targetEmail: string; // where to forward notifications; defaults to email
+  /** Set when we sent the \"2 days before expiry\" in-app reminder for this subscriptionEnd. */
+  subscriptionExpiryReminderSentFor?: Date;
   lastSubscriptionWarningSentAt?: Date;
   refreshToken?: string;
   createdAt: Date;
@@ -41,6 +43,7 @@ const userSchema = new Schema<IUser>(
     currentSubscriptionPrice: { type: Number },
     currentSubscriptionCurrency: { type: String },
     targetEmail: { type: String, trim: true }, // defaults to email in pre-save
+    subscriptionExpiryReminderSentFor: { type: Date },
     lastSubscriptionWarningSentAt: { type: Date },
     refreshToken: { type: String, select: false },
   },

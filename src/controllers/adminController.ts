@@ -187,6 +187,7 @@ export const clearUserSubscription = async (
           subscriptionEnd: '',
           currentSubscriptionPrice: '',
           currentSubscriptionCurrency: '',
+          subscriptionExpiryReminderSentFor: '',
         },
       },
       { new: true }

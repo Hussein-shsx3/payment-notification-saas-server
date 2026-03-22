@@ -3,6 +3,7 @@ export { Notification } from './Notification';
 export { PaymentNotification } from './PaymentNotification';
 export { Admin } from './Admin';
 export { SubscriptionPayment } from './SubscriptionPayment';
+export { SupportMessage } from './SupportMessage';
 
 export type { IUser } from './User';
 export type { INotification } from './Notification';

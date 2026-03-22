@@ -1,3 +1,4 @@
+import './loadEnv';
 import app from './app';
 import { config } from './config';
 import { connectDatabase } from './config/database';

@@ -1,8 +1,4 @@
-import dotenv from 'dotenv';
-import path from 'path';
-
-// Load .env from server root; values with spaces or `$` should be double-quoted in .env
-dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+import '../loadEnv';
 
 const required = (key: string): string => {
   const value = process.env[key];

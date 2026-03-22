@@ -1,8 +1,10 @@
+import './loadEnv';
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
-import routes from './routes';
 import { config } from './config';
+import { verifyGmailSmtpConnection } from './services/verificationEmail';
+import routes from './routes';
 import { errorHandler, notFound } from './middleware';
 
 const app = express();
@@ -25,7 +27,28 @@ app.get('/health/email', (_req, res) => {
     appPasswordLength: pass.length,
     expectedAppPasswordLength: 16,
     looksConfigured: u.length > 0 && pass.length === 16,
+    hint:
+      'If looksConfigured is false locally, quote GMAIL_APP_PASSWORD in .env. On Render, paste the 16-char app password in the dashboard.',
   });
+});
+
+/** Actually connects to Gmail (verify); shows Invalid login / network errors. No email sent. */
+app.get('/health/email/smtp', async (_req, res) => {
+  try {
+    const r = await verifyGmailSmtpConnection();
+    res.json({
+      smtpVerifyOk: r.ok,
+      error: r.error ?? null,
+      note: r.ok
+        ? 'SMTP auth OK — sending should work if inbox is not full / rate limits.'
+        : 'Fix GMAIL_USER + GMAIL_APP_PASSWORD or Google security (App Password, 2FA).',
+    });
+  } catch (e) {
+    res.status(500).json({
+      smtpVerifyOk: false,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
 });
 
 app.use('/api', routes);

@@ -71,16 +71,18 @@ export const register = async (req: Request, res: Response, next: NextFunction):
       verificationTokenExpires,
     });
 
-    // Do not await SMTP — it blocks the HTTP response for many seconds and feels "stuck".
-    void sendVerificationEmail(emailLower, verificationToken)
-      .then((emailResult) => {
-        if (!emailResult.sent) {
-          console.error('[register] Verification email not sent:', emailResult.detail ?? 'unknown');
-        }
-      })
-      .catch((err) => {
-        console.error('[register] Verification email threw:', err);
-      });
+    // Defer to next event loop so the HTTP response is fully flushed first (Render / proxies).
+    setImmediate(() => {
+      void sendVerificationEmail(emailLower, verificationToken)
+        .then((emailResult) => {
+          if (!emailResult.sent) {
+            console.error('[register] Verification email not sent:', emailResult.detail ?? 'unknown');
+          }
+        })
+        .catch((err) => {
+          console.error('[register] Verification email threw:', err);
+        });
+    });
 
     res.status(201).json({
       success: true,

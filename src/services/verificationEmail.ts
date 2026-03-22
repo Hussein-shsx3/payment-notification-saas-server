@@ -139,3 +139,42 @@ export async function sendVerificationEmail(
     };
   }
 }
+
+/**
+ * Connects to Gmail SMTP and runs `verify()` — does not send mail.
+ * Use GET /health/email/smtp to see if credentials work (wrong password, blocked IP, etc.).
+ */
+export async function verifyGmailSmtpConnection(): Promise<{ ok: boolean; error?: string }> {
+  const user = process.env.GMAIL_USER?.trim();
+  const pass = (process.env.GMAIL_APP_PASSWORD ?? '').replace(/\s/g, '');
+  if (!user || !pass) {
+    return { ok: false, error: 'GMAIL_USER or GMAIL_APP_PASSWORD missing' };
+  }
+  const common = {
+    host: 'smtp.gmail.com' as const,
+    auth: { user, pass },
+    connectionTimeout: 15_000,
+    greetingTimeout: 15_000,
+    socketTimeout: 20_000,
+  };
+  try {
+    const t465 = nodemailer.createTransport({ ...common, port: 465, secure: true });
+    await t465.verify();
+    return { ok: true };
+  } catch {
+    try {
+      const t587 = nodemailer.createTransport({
+        ...common,
+        port: 587,
+        secure: false,
+        requireTLS: true,
+      });
+      await t587.verify();
+      return { ok: true };
+    } catch (e587) {
+      const msg =
+        e587 instanceof Error ? e587.message : String(e587);
+      return { ok: false, error: msg };
+    }
+  }
+}

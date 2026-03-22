@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import { config } from './config';
-import { verifyGmailSmtpConnection, verifyResendEnvPresent } from './services/verificationEmail';
+import { verifyGmailSmtpConnection } from './services/verificationEmail';
 import routes from './routes';
 import { errorHandler, notFound } from './middleware';
 
@@ -17,17 +17,13 @@ app.use(cookieParser());
 const emailStatusHandler = (_req: express.Request, res: express.Response): void => {
   const u = process.env.GMAIL_USER?.trim() ?? '';
   const pass = (process.env.GMAIL_APP_PASSWORD ?? '').replace(/\s/g, '');
-  const resend = verifyResendEnvPresent();
+  const apiPublic = (process.env.API_PUBLIC_URL ?? '').trim();
   res.json({
     gmailUserSet: u.length > 0,
     appPasswordLength: pass.length,
     expectedAppPasswordLength: 16,
     gmailLooksConfigured: u.length > 0 && pass.length === 16,
-    resendApiKeySet: resend.resendKeySet,
-    mailFromSet: resend.mailFromSet,
-    resendReady: resend.resendKeySet && resend.mailFromSet,
-    hint:
-      'On Render, outbound SMTP to Gmail usually times out — use Resend (HTTPS): RESEND_API_KEY + MAIL_FROM with a verified domain, or onboarding@resend.dev for testing.',
+    apiPublicUrlSet: apiPublic.length > 0,
   });
 };
 
@@ -40,10 +36,10 @@ const smtpVerifyHandler = async (_req: express.Request, res: express.Response): 
       smtpVerifyOk: r.ok,
       error: r.error ?? null,
       note: r.ok
-        ? 'SMTP auth OK (rare on Render — outbound SMTP is often blocked).'
+        ? 'SMTP authentication succeeded.'
         : looksLikeTimeout
-          ? 'Connection timeout usually means the host blocks SMTP (465/587). Use Resend API instead of Gmail SMTP on Render.'
-          : 'Fix GMAIL_USER + GMAIL_APP_PASSWORD or Google security (App Password, 2FA).',
+          ? 'Connection timeout — your host may block outbound SMTP (465/587), or the network is unreachable.'
+          : 'Check GMAIL_USER, GMAIL_APP_PASSWORD (16-char Google App Password), and that 2-Step Verification is on.',
     });
   } catch (e) {
     res.status(500).json({

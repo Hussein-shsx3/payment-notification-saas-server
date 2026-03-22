@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { User } from '../models';
 import { AuthRequest } from '../types';
 import { BadRequestError, NotFoundError } from '../utils/errors';
+import { getPasswordPolicyMessage } from '../utils/passwordPolicy';
 
 const SALT_ROUNDS = 12;
 
@@ -82,6 +83,12 @@ export const changePassword = async (req: AuthRequest, res: Response, next: Next
     const { currentPassword, newPassword } = req.body;
     if (!currentPassword || !newPassword) {
       next(new BadRequestError('currentPassword and newPassword are required'));
+      return;
+    }
+
+    const passwordPolicy = getPasswordPolicyMessage(newPassword);
+    if (passwordPolicy) {
+      next(new BadRequestError(passwordPolicy));
       return;
     }
 

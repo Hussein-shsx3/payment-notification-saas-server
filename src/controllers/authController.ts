@@ -5,6 +5,7 @@ import { BadRequestError, UnauthorizedError, NotFoundError } from '../utils/erro
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken, randomToken } from '../utils/tokens';
 import { config } from '../config';
 import { sendVerificationEmail } from '../services/verificationEmail';
+import { getPasswordPolicyMessage } from '../utils/passwordPolicy';
 
 const SALT_ROUNDS = 12;
 const VERIFICATION_TTL_MS = 48 * 60 * 60 * 1000;
@@ -39,6 +40,12 @@ export const register = async (req: Request, res: Response, next: NextFunction):
 
     if (!fullName || !email || !phoneNumber || !password) {
       next(new BadRequestError('fullName, email, phoneNumber and password are required'));
+      return;
+    }
+
+    const passwordPolicy = getPasswordPolicyMessage(password);
+    if (passwordPolicy) {
+      next(new BadRequestError(passwordPolicy));
       return;
     }
 
@@ -192,6 +199,12 @@ export const resetPassword = async (req: Request, res: Response, next: NextFunct
     const { token, password } = req.body;
     if (!token || !password) {
       next(new BadRequestError('Token and new password are required'));
+      return;
+    }
+
+    const passwordPolicy = getPasswordPolicyMessage(password);
+    if (passwordPolicy) {
+      next(new BadRequestError(passwordPolicy));
       return;
     }
 

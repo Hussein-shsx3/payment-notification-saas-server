@@ -4,12 +4,31 @@ import bcrypt from 'bcryptjs';
 import { Admin, User, Notification, SubscriptionPayment, PaymentNotification } from '../models';
 import { sendPushNotificationToUser } from '../services/fcm';
 import { destroySubscriptionProofImage } from '../services/cloudinarySubscriptionProof';
+import { normalizeClientProofHistory } from '../utils/subscriptionProofHistory';
 import { BadRequestError, UnauthorizedError, NotFoundError } from '../utils/errors';
 import { generateAdminToken, randomVerificationCode } from '../utils/tokens';
 import { sendVerificationEmail } from '../services/verificationEmail';
 import { VERIFICATION_TTL_MS } from '../constants/verification';
 
 const SALT_ROUNDS = 12;
+
+async function destroyAllSubscriptionProofImagesForUser(userId: string): Promise<void> {
+  const before = await User.findById(userId)
+    .select('+subscriptionPaymentProofPublicId subscriptionPaymentProofHistory')
+    .lean();
+  if (!before) return;
+  const ids = new Set<string>();
+  if (before.subscriptionPaymentProofPublicId) {
+    ids.add(String(before.subscriptionPaymentProofPublicId));
+  }
+  const hist = before.subscriptionPaymentProofHistory as Array<{ publicId?: string }> | undefined;
+  for (const h of hist || []) {
+    if (h.publicId) ids.add(String(h.publicId));
+  }
+  for (const id of ids) {
+    await destroySubscriptionProofImage(id);
+  }
+}
 
 interface AdminAuthRequest extends Request {
   adminId?: string;
@@ -165,33 +184,87 @@ export const setSubscriptionPaymentProofReviewed = async (
       return;
     }
 
-    const existing = await User.findById(userId).select('subscriptionPaymentProofUrl').lean();
+    const existing = await User.findById(userId)
+      .select('subscriptionPaymentProofUrl subscriptionPaymentProofHistory')
+      .lean();
     if (!existing) {
       next(new NotFoundError('User not found'));
       return;
     }
-    const hasProof = !!(existing.subscriptionPaymentProofUrl && String(existing.subscriptionPaymentProofUrl).trim());
+    const hist = (existing.subscriptionPaymentProofHistory || []) as Array<{
+      _id?: mongoose.Types.ObjectId;
+      uploadedAt?: Date;
+    }>;
+    const hasProof =
+      !!(existing.subscriptionPaymentProofUrl && String(existing.subscriptionPaymentProofUrl).trim()) ||
+      hist.length > 0;
     if (!hasProof) {
       next(new BadRequestError('This user has no payment proof image'));
       return;
     }
 
-    const user = await User.findByIdAndUpdate(
-      userId,
-      reviewed
-        ? { $set: { subscriptionPaymentProofReviewedAt: new Date() } }
-        : { $unset: { subscriptionPaymentProofReviewedAt: '' } },
-      { new: true }
-    ).select(
-      '-passwordHash -refreshToken -verificationToken -verificationTokenExpires -resetPasswordToken -resetPasswordExpires -subscriptionPaymentProofPublicId'
-    );
+    const latest =
+      hist.length > 0
+        ? [...hist].sort(
+            (a, b) =>
+              new Date(b.uploadedAt || 0).getTime() - new Date(a.uploadedAt || 0).getTime()
+          )[0]
+        : null;
+    const latestId = latest?._id;
+
+    if (latestId) {
+      if (reviewed) {
+        await User.updateOne(
+          { _id: userId },
+          {
+            $set: {
+              subscriptionPaymentProofReviewedAt: new Date(),
+              'subscriptionPaymentProofHistory.$[e].reviewedAt': new Date(),
+            },
+          },
+          { arrayFilters: [{ 'e._id': latestId }] }
+        );
+      } else {
+        await User.updateOne(
+          { _id: userId },
+          {
+            $unset: { subscriptionPaymentProofReviewedAt: '' },
+            $set: { 'subscriptionPaymentProofHistory.$[e].reviewedAt': null },
+          },
+          { arrayFilters: [{ 'e._id': latestId }] }
+        );
+      }
+    } else {
+      await User.findByIdAndUpdate(
+        userId,
+        reviewed
+          ? { $set: { subscriptionPaymentProofReviewedAt: new Date() } }
+          : { $unset: { subscriptionPaymentProofReviewedAt: '' } }
+      );
+    }
+
+    const user = await User.findById(userId)
+      .select(
+        '-passwordHash -refreshToken -verificationToken -verificationTokenExpires -resetPasswordToken -resetPasswordExpires -subscriptionPaymentProofPublicId'
+      )
+      .lean();
 
     if (!user) {
       next(new NotFoundError('User not found'));
       return;
     }
 
-    res.json({ success: true, data: user });
+    const u = user as Record<string, unknown>;
+    const { subscriptionPaymentProofHistory: _h, ...rest } = u;
+    res.json({
+      success: true,
+      data: {
+        ...rest,
+        subscriptionPaymentProofHistory: normalizeClientProofHistory(
+          user as Parameters<typeof normalizeClientProofHistory>[0]
+        ),
+      },
+    });
   } catch (e) {
     next(e);
   }
@@ -210,20 +283,24 @@ export const deleteSubscriptionPaymentProof = async (
       return;
     }
 
-    const before = await User.findById(userId).select('+subscriptionPaymentProofPublicId').lean();
+    const before = await User.findById(userId)
+      .select('subscriptionPaymentProofUrl subscriptionPaymentProofHistory')
+      .lean();
     if (!before) {
       next(new NotFoundError('User not found'));
       return;
     }
-    const hasProof = !!(before.subscriptionPaymentProofUrl && String(before.subscriptionPaymentProofUrl).trim());
+    const hasHist = Array.isArray(before.subscriptionPaymentProofHistory)
+      ? (before.subscriptionPaymentProofHistory as unknown[]).length > 0
+      : false;
+    const hasProof =
+      !!(before.subscriptionPaymentProofUrl && String(before.subscriptionPaymentProofUrl).trim()) || hasHist;
     if (!hasProof) {
       next(new BadRequestError('No payment proof to delete'));
       return;
     }
 
-    if (before.subscriptionPaymentProofPublicId) {
-      await destroySubscriptionProofImage(before.subscriptionPaymentProofPublicId);
-    }
+    await destroyAllSubscriptionProofImagesForUser(userId);
 
     const user = await User.findByIdAndUpdate(
       userId,
@@ -233,6 +310,7 @@ export const deleteSubscriptionPaymentProof = async (
           subscriptionPaymentProofPublicId: '',
           subscriptionPaymentProofUploadedAt: '',
           subscriptionPaymentProofReviewedAt: '',
+          subscriptionPaymentProofHistory: '',
         },
       },
       { new: true }
@@ -263,15 +341,13 @@ export const deleteUser = async (
       return;
     }
 
-    const existing = await User.findById(userId).select('+subscriptionPaymentProofPublicId').lean();
+    const existing = await User.findById(userId).select('_id').lean();
     if (!existing) {
       next(new NotFoundError('User not found'));
       return;
     }
 
-    if (existing.subscriptionPaymentProofPublicId) {
-      await destroySubscriptionProofImage(existing.subscriptionPaymentProofPublicId);
-    }
+    await destroyAllSubscriptionProofImagesForUser(userId);
 
     await Promise.all([
       PaymentNotification.deleteMany({ userId }),
@@ -299,10 +375,7 @@ export const clearUserSubscription = async (
       return;
     }
 
-    const before = await User.findById(userId).select('+subscriptionPaymentProofPublicId').lean();
-    if (before?.subscriptionPaymentProofPublicId) {
-      await destroySubscriptionProofImage(before.subscriptionPaymentProofPublicId);
-    }
+    await destroyAllSubscriptionProofImagesForUser(userId);
 
     const user = await User.findByIdAndUpdate(
       userId,
@@ -317,6 +390,7 @@ export const clearUserSubscription = async (
           subscriptionPaymentProofPublicId: '',
           subscriptionPaymentProofUploadedAt: '',
           subscriptionPaymentProofReviewedAt: '',
+          subscriptionPaymentProofHistory: '',
         },
       },
       { new: true }
@@ -356,10 +430,18 @@ export const getUserDetails = async (
       .sort({ periodStart: -1 })
       .lean();
 
+    const u = user as Record<string, unknown>;
+    const { subscriptionPaymentProofHistory: _hp, ...userRest } = u;
+
     res.json({
       success: true,
       data: {
-        user,
+        user: {
+          ...userRest,
+          subscriptionPaymentProofHistory: normalizeClientProofHistory(
+            user as Parameters<typeof normalizeClientProofHistory>[0]
+          ),
+        },
         payments,
       },
     });
@@ -679,15 +761,64 @@ export const getStats = async (
         { $match: { createdAt: { $gte: thirtyDaysAgo } } },
         { $group: { _id: null, total: { $sum: '$amount' } } },
       ]),
-      User.find({
-        subscriptionPaymentProofUrl: { $exists: true, $nin: [null, ''] },
-      })
-        .select(
-          '_id fullName email subscriptionPaymentProofUrl subscriptionPaymentProofUploadedAt subscriptionPaymentProofReviewedAt'
-        )
-        .sort({ subscriptionPaymentProofUploadedAt: -1 })
-        .limit(8)
-        .lean(),
+      User.aggregate([
+        {
+          $match: {
+            $or: [
+              { 'subscriptionPaymentProofHistory.0': { $exists: true } },
+              { subscriptionPaymentProofUrl: { $exists: true, $nin: [null, ''] } },
+            ],
+          },
+        },
+        {
+          $project: {
+            fullName: 1,
+            email: 1,
+            legacyUrl: '$subscriptionPaymentProofUrl',
+            legacyUploaded: '$subscriptionPaymentProofUploadedAt',
+            legacyReviewed: '$subscriptionPaymentProofReviewedAt',
+            subscriptionPaymentProofHistory: { $ifNull: ['$subscriptionPaymentProofHistory', []] },
+          },
+        },
+        {
+          $addFields: {
+            proofs: {
+              $cond: {
+                if: { $gt: [{ $size: '$subscriptionPaymentProofHistory' }, 0] },
+                then: '$subscriptionPaymentProofHistory',
+                else: {
+                  $cond: {
+                    if: {
+                      $and: [{ $ne: ['$legacyUrl', null] }, { $ne: ['$legacyUrl', ''] }],
+                    },
+                    then: [
+                      {
+                        url: '$legacyUrl',
+                        uploadedAt: '$legacyUploaded',
+                        reviewedAt: '$legacyReviewed',
+                      },
+                    ],
+                    else: [],
+                  },
+                },
+              },
+            },
+          },
+        },
+        { $unwind: '$proofs' },
+        { $sort: { 'proofs.uploadedAt': -1 } },
+        { $limit: 24 },
+        {
+          $project: {
+            _id: '$_id',
+            fullName: 1,
+            email: 1,
+            subscriptionPaymentProofUrl: '$proofs.url',
+            subscriptionPaymentProofUploadedAt: '$proofs.uploadedAt',
+            subscriptionPaymentProofReviewedAt: '$proofs.reviewedAt',
+          },
+        },
+      ]),
     ]);
 
     const monthlyData = monthlyRegistrations.map((item) => {

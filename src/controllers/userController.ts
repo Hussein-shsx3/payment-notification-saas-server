@@ -10,6 +10,10 @@ import {
   uploadSubscriptionProofImage,
 } from '../services/cloudinarySubscriptionProof';
 import { optimizePaymentProofImage } from '../services/optimizePaymentProofImage';
+import {
+  normalizeClientProofHistory,
+  SUBSCRIPTION_PROOF_HISTORY_MAX,
+} from '../utils/subscriptionProofHistory';
 
 const SALT_ROUNDS = 12;
 
@@ -39,7 +43,15 @@ export const getProfile = async (req: AuthRequest, res: Response, next: NextFunc
       next(new NotFoundError('User not found'));
       return;
     }
-    res.json({ success: true, data: toProfileResponse(user as unknown as Record<string, unknown>) });
+    const u = user as Record<string, unknown>;
+    const { subscriptionPaymentProofHistory: _hist, ...rest } = u;
+    const data = {
+      ...toProfileResponse(rest),
+      subscriptionPaymentProofHistory: normalizeClientProofHistory(
+        user as Parameters<typeof normalizeClientProofHistory>[0]
+      ),
+    };
+    res.json({ success: true, data });
   } catch (e) {
     next(e);
   }
@@ -85,9 +97,16 @@ export const updateProfile = async (req: AuthRequest, res: Response, next: NextF
       next(new NotFoundError('User not found'));
       return;
     }
+    const obj = user.toObject() as unknown as Record<string, unknown>;
+    const { subscriptionPaymentProofHistory: _ph, ...rest } = obj;
     res.json({
       success: true,
-      data: toProfileResponse(user.toObject() as unknown as Record<string, unknown>),
+      data: {
+        ...toProfileResponse(rest),
+        subscriptionPaymentProofHistory: normalizeClientProofHistory(
+          user.toObject() as Parameters<typeof normalizeClientProofHistory>[0]
+        ),
+      },
     });
   } catch (e) {
     next(e);
@@ -110,23 +129,60 @@ export const uploadSubscriptionPaymentProof = async (
       return;
     }
 
-    const existing = await User.findById(req.userId).select('+subscriptionPaymentProofPublicId');
+    const existing = await User.findById(req.userId).select('+subscriptionPaymentProofPublicId').lean();
     if (!existing) {
       next(new NotFoundError('User not found'));
       return;
     }
 
-    const oldPublicId = existing.subscriptionPaymentProofPublicId;
     const optimized = await optimizePaymentProofImage(file.buffer);
     const { url, publicId } = await uploadSubscriptionProofImage(optimized);
-    if (oldPublicId) {
-      await destroySubscriptionProofImage(oldPublicId);
+
+    type HistEntry = { url: string; publicId: string; uploadedAt: Date; reviewedAt?: Date };
+    let history: HistEntry[] = Array.isArray(existing.subscriptionPaymentProofHistory)
+      ? (existing.subscriptionPaymentProofHistory as HistEntry[]).map((h) => ({
+          url: h.url,
+          publicId: h.publicId,
+          uploadedAt: new Date(h.uploadedAt),
+          ...(h.reviewedAt ? { reviewedAt: new Date(h.reviewedAt) } : {}),
+        }))
+      : [];
+
+    if (
+      history.length === 0 &&
+      existing.subscriptionPaymentProofUrl &&
+      existing.subscriptionPaymentProofPublicId
+    ) {
+      history.push({
+        url: existing.subscriptionPaymentProofUrl,
+        publicId: existing.subscriptionPaymentProofPublicId,
+        uploadedAt: existing.subscriptionPaymentProofUploadedAt
+          ? new Date(existing.subscriptionPaymentProofUploadedAt)
+          : new Date(0),
+        ...(existing.subscriptionPaymentProofReviewedAt
+          ? { reviewedAt: new Date(existing.subscriptionPaymentProofReviewedAt) }
+          : {}),
+      });
+    }
+
+    history.push({
+      url,
+      publicId,
+      uploadedAt: new Date(),
+    });
+
+    while (history.length > SUBSCRIPTION_PROOF_HISTORY_MAX) {
+      const removed = history.shift();
+      if (removed?.publicId) {
+        await destroySubscriptionProofImage(removed.publicId);
+      }
     }
 
     const updated = await User.findByIdAndUpdate(
       req.userId,
       {
         $set: {
+          subscriptionPaymentProofHistory: history,
           subscriptionPaymentProofUrl: url,
           subscriptionPaymentProofPublicId: publicId,
           subscriptionPaymentProofUploadedAt: new Date(),
@@ -145,10 +201,16 @@ export const uploadSubscriptionPaymentProof = async (
 
     const plain = updated.toObject() as unknown as Record<string, unknown>;
     delete plain.subscriptionPaymentProofPublicId;
+    delete plain.subscriptionPaymentProofHistory;
 
     res.json({
       success: true,
-      data: toProfileResponse(plain),
+      data: {
+        ...toProfileResponse(plain),
+        subscriptionPaymentProofHistory: normalizeClientProofHistory(
+          updated.toObject() as Parameters<typeof normalizeClientProofHistory>[0]
+        ),
+      },
     });
   } catch (e) {
     next(e);

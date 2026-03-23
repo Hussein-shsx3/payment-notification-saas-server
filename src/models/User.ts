@@ -22,13 +22,21 @@ export interface IUser extends Document {
   /** Set when we sent the \"2 days before expiry\" in-app reminder for this subscriptionEnd. */
   subscriptionExpiryReminderSentFor?: Date;
   lastSubscriptionWarningSentAt?: Date;
-  /** Screenshot / proof of subscription payment (Cloudinary URL). */
+  /** Screenshot / proof of subscription payment (Cloudinary URL) — latest upload. */
   subscriptionPaymentProofUrl?: string;
-  /** Cloudinary public_id for replacing or deleting the proof image. */
+  /** Cloudinary public_id for the latest proof image. */
   subscriptionPaymentProofPublicId?: string;
   subscriptionPaymentProofUploadedAt?: Date;
   /** Set when an admin marks the current proof as reviewed (cleared on new upload). */
   subscriptionPaymentProofReviewedAt?: Date;
+  /** All uploaded proofs (newest appends); older images are kept for admin review. */
+  subscriptionPaymentProofHistory?: Array<{
+    _id?: mongoose.Types.ObjectId;
+    url: string;
+    publicId: string;
+    uploadedAt: Date;
+    reviewedAt?: Date;
+  }>;
   /** User-selected renewal period (shown to admin with payment proof). */
   subscriptionPlanPreference?: 'week' | 'month' | 'year';
   refreshToken?: string;
@@ -69,6 +77,20 @@ const userSchema = new Schema<IUser>(
 );
 
 userSchema.index({ subscriptionEnd: 1 });
+
+const subscriptionProofItemSchema = new Schema(
+  {
+    url: { type: String, required: true, trim: true },
+    publicId: { type: String, required: true, trim: true },
+    uploadedAt: { type: Date, required: true },
+    reviewedAt: { type: Date },
+  },
+  { _id: true }
+);
+
+userSchema.add({
+  subscriptionPaymentProofHistory: { type: [subscriptionProofItemSchema], default: undefined },
+});
 
 userSchema.pre('save', function (next) {
   if (this.isNew && !this.targetEmail) {

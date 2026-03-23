@@ -45,12 +45,22 @@ export const getProfile = async (req: AuthRequest, res: Response, next: NextFunc
   }
 };
 
+const SUBSCRIPTION_PLAN_VALUES = new Set(['week', 'month', 'year']);
+
 export const updateProfile = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { fullName, targetEmail, phoneNumber } = req.body;
+    const { fullName, targetEmail, phoneNumber, subscriptionPlanPreference } = req.body;
     const allowed: Record<string, string> = {};
     if (fullName !== undefined) allowed.fullName = String(fullName).trim();
     if (targetEmail !== undefined) allowed.targetEmail = String(targetEmail).trim();
+    if (subscriptionPlanPreference !== undefined) {
+      const p = String(subscriptionPlanPreference).trim().toLowerCase();
+      if (!SUBSCRIPTION_PLAN_VALUES.has(p)) {
+        next(new BadRequestError('subscriptionPlanPreference must be week, month, or year'));
+        return;
+      }
+      allowed.subscriptionPlanPreference = p;
+    }
     if (phoneNumber !== undefined) {
       const p = String(phoneNumber).trim();
       if (!p) {

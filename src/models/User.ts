@@ -29,6 +29,8 @@ export interface IUser extends Document {
   subscriptionPaymentProofUploadedAt?: Date;
   /** Set when an admin marks the current proof as reviewed (cleared on new upload). */
   subscriptionPaymentProofReviewedAt?: Date;
+  /** User-selected renewal period (shown to admin with payment proof). */
+  subscriptionPlanPreference?: 'week' | 'month' | 'year';
   refreshToken?: string;
   createdAt: Date;
   updatedAt: Date;
@@ -56,6 +58,11 @@ const userSchema = new Schema<IUser>(
     subscriptionPaymentProofPublicId: { type: String, trim: true, select: false },
     subscriptionPaymentProofUploadedAt: { type: Date },
     subscriptionPaymentProofReviewedAt: { type: Date },
+    subscriptionPlanPreference: {
+      type: String,
+      enum: ['week', 'month', 'year'],
+      trim: true,
+    },
     refreshToken: { type: String, select: false },
   },
   { timestamps: true }

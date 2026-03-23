@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import { User, PaymentNotification, Notification } from '../models';
@@ -37,6 +38,22 @@ export const createPaymentNotification = async (
       }
     }
 
+    const contentHash = _computePaymentContentHash({
+      userId: String(req.userId),
+      source: String(source),
+      message: String(message),
+      amount: parsedAmount,
+      transactionId: txId || undefined,
+    });
+    const existingByContent = await PaymentNotification.findOne({
+      userId: req.userId,
+      contentHash,
+    });
+    if (existingByContent) {
+      res.status(201).json({ success: true, data: existingByContent });
+      return;
+    }
+
     const dir =
       direction === 'outgoing' || direction === 'incoming' || direction === 'unknown'
         ? direction
@@ -51,6 +68,7 @@ export const createPaymentNotification = async (
       amount: parsedAmount,
       currency,
       transactionId: txId ? txId : undefined,
+      contentHash,
       receivedAt: received,
     });
 
@@ -92,6 +110,30 @@ function _isInternalAccountTransferOnly(combinedLower: string): boolean {
   if (t.includes('بين الحسابات') || t.includes('between accounts')) return true;
   if (t.includes('تحويل بنكي بين الحسابات') || t.includes('تحويل بين الحسابات')) return true;
   return false;
+}
+
+/** Card movement alerts (e.g. "حركة على بطاقة رقم … بقيمة") — not stored. */
+function _isCardMovementExcluded(combinedLower: string): boolean {
+  return combinedLower.includes('حركة على بطاقة');
+}
+
+function _normalizeForFingerprint(message: string): string {
+  return _normalizeDigits(message).replace(/\s+/g, ' ').trim();
+}
+
+function _computePaymentContentHash(params: {
+  userId: string;
+  source: string;
+  message: string;
+  amount: number;
+  transactionId?: string;
+}): string {
+  const tx = (params.transactionId || '').trim().toLowerCase();
+  if (tx) return `tx:${tx}`;
+  const norm = _normalizeForFingerprint(params.message);
+  return createHash('sha256')
+    .update(`${params.userId}|${params.source}|${norm}|${params.amount}`, 'utf8')
+    .digest('hex');
 }
 
 function _inferPaymentDirection(fullTextLower: string): 'incoming' | 'outgoing' | 'unknown' {
@@ -327,6 +369,18 @@ function _isPaymentIntent(input: string): boolean {
     'debited',
     'withdrawal',
     'cash out',
+    // English — common bank templates (short / currency-led)
+    'transaction',
+    'purchase',
+    'spent',
+    'amount',
+    'debit',
+    'nis',
+    'ils',
+    'jod',
+    'usd',
+    'gbp',
+    'eur',
     // Arabic — received
     'تم استلام',
     'تم ايداع',
@@ -476,6 +530,7 @@ function _parseAndroidPaymentNotification(params: {
 
   const combinedLower = combinedNormalized.toLowerCase();
   if (_isInternalAccountTransferOnly(combinedLower)) return null;
+  if (_isCardMovementExcluded(combinedLower)) return null;
 
   const fullText = `${titleLower} ${messageLower}`;
   if (!_isPaymentIntent(fullText)) return null;
@@ -557,6 +612,22 @@ export const capturePaymentNotificationFromAndroid = async (
       }
     }
 
+    const contentHash = _computePaymentContentHash({
+      userId: String(req.userId),
+      source: parsed.source,
+      message: parsed.message,
+      amount: parsed.amount,
+      transactionId: txId || undefined,
+    });
+    const existingByContent = await PaymentNotification.findOne({
+      userId: req.userId,
+      contentHash,
+    });
+    if (existingByContent) {
+      res.status(201).json({ success: true, data: existingByContent });
+      return;
+    }
+
     const created = await PaymentNotification.create({
       userId: req.userId,
       source: parsed.source,
@@ -566,6 +637,7 @@ export const capturePaymentNotificationFromAndroid = async (
       amount: parsed.amount,
       currency: parsed.currency,
       transactionId: txId || undefined,
+      contentHash,
       receivedAt: received,
     });
 

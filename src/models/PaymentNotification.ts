@@ -12,6 +12,8 @@ export interface IPaymentNotification extends Document {
   amount?: number;
   currency?: string;
   transactionId?: string;
+  /** Dedupe key when transactionId is absent (sha256 of user + source + normalized message + amount). */
+  contentHash?: string;
   forwardedToEmail: boolean;
   forwardedEmail?: string;
   emailSentAt?: Date;
@@ -34,6 +36,7 @@ const paymentNotificationSchema = new Schema<IPaymentNotification>(
     amount: { type: Number },
     currency: { type: String, trim: true, uppercase: true },
     transactionId: { type: String, trim: true, lowercase: true },
+    contentHash: { type: String, trim: true },
     forwardedToEmail: { type: Boolean, default: false },
     forwardedEmail: { type: String, trim: true, lowercase: true },
     emailSentAt: { type: Date },
@@ -45,6 +48,7 @@ const paymentNotificationSchema = new Schema<IPaymentNotification>(
 
 paymentNotificationSchema.index({ userId: 1, receivedAt: -1 });
 paymentNotificationSchema.index({ userId: 1, transactionId: 1 });
+paymentNotificationSchema.index({ userId: 1, contentHash: 1 });
 
 export const PaymentNotification = mongoose.model<IPaymentNotification>(
   'PaymentNotification',

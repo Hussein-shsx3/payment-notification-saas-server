@@ -57,7 +57,7 @@ export const getProfile = async (req: AuthRequest, res: Response, next: NextFunc
   }
 };
 
-const SUBSCRIPTION_PLAN_VALUES = new Set(['week', 'month', 'year']);
+const SUBSCRIPTION_PLAN_VALUES = new Set(['week', 'month']);
 
 export const updateProfile = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
@@ -68,7 +68,7 @@ export const updateProfile = async (req: AuthRequest, res: Response, next: NextF
     if (subscriptionPlanPreference !== undefined) {
       const p = String(subscriptionPlanPreference).trim().toLowerCase();
       if (!SUBSCRIPTION_PLAN_VALUES.has(p)) {
-        next(new BadRequestError('subscriptionPlanPreference must be week, month, or year'));
+        next(new BadRequestError('subscriptionPlanPreference must be week or month'));
         return;
       }
       allowed.subscriptionPlanPreference = p;

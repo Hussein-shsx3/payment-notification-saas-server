@@ -3,6 +3,7 @@ import { Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
 import { User } from '../models';
 import { BadRequestError, UnauthorizedError, NotFoundError } from '../utils/errors';
+import { AccessMode } from '../types';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken, randomVerificationCode } from '../utils/tokens';
 import { normalizeVerificationInput } from '../utils/verificationInput';
 import { config } from '../config';
@@ -149,8 +150,8 @@ export const login = async (req: Request, res: Response, next: NextFunction): Pr
       return;
     }
 
-    const accessToken = generateAccessToken(user._id.toString());
-    const refreshToken = generateRefreshToken(user._id.toString());
+    const accessToken = generateAccessToken(user._id.toString(), 'full');
+    const refreshToken = generateRefreshToken(user._id.toString(), 'full');
     user.refreshToken = refreshToken;
     await user.save({ validateBeforeSave: false });
 
@@ -158,6 +159,71 @@ export const login = async (req: Request, res: Response, next: NextFunction): Pr
       success: true,
       accessToken,
       refreshToken,
+      accessMode: 'full' as const,
+      expiresIn: config.jwt.accessExpiresIn,
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
+/** Read-only session: same email as main account, separate viewer password set from Settings. */
+export const loginViewer = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const email = String(req.body.email ?? '').trim().toLowerCase();
+    const { password } = req.body;
+
+    if (!email || !email.includes('@')) {
+      next(new BadRequestError('Email and viewer password are required'));
+      return;
+    }
+    if (!password) {
+      next(new BadRequestError('Email and viewer password are required'));
+      return;
+    }
+
+    const user = await User.findOne({ email }).select('+viewerPasswordHash +emailVerified +refreshToken');
+
+    if (!user) {
+      next(new UnauthorizedError('Invalid credentials'));
+      return;
+    }
+
+    if (!user.emailVerified) {
+      next(
+        new UnauthorizedError(
+          'Please verify the main account email before using viewer login.'
+        )
+      );
+      return;
+    }
+
+    if (!user.viewerPasswordHash) {
+      next(
+        new UnauthorizedError(
+          'Viewer access is not set up yet. Sign in with the main account and set a viewer password in Settings.'
+        )
+      );
+      return;
+    }
+
+    const valid = await bcrypt.compare(password, user.viewerPasswordHash);
+    if (!valid) {
+      next(new UnauthorizedError('Invalid credentials'));
+      return;
+    }
+
+    const mode: AccessMode = 'viewer';
+    const accessToken = generateAccessToken(user._id.toString(), mode);
+    const refreshToken = generateRefreshToken(user._id.toString(), mode);
+    user.refreshToken = refreshToken;
+    await user.save({ validateBeforeSave: false });
+
+    res.json({
+      success: true,
+      accessToken,
+      refreshToken,
+      accessMode: 'viewer' as const,
       expiresIn: config.jwt.accessExpiresIn,
     });
   } catch (e) {
@@ -180,8 +246,9 @@ export const refresh = async (req: Request, res: Response, next: NextFunction): 
       return;
     }
 
-    const accessToken = generateAccessToken(user._id.toString());
-    const newRefreshToken = generateRefreshToken(user._id.toString());
+    const mode: AccessMode = decoded.accessMode === 'viewer' ? 'viewer' : 'full';
+    const accessToken = generateAccessToken(user._id.toString(), mode);
+    const newRefreshToken = generateRefreshToken(user._id.toString(), mode);
     user.refreshToken = newRefreshToken;
     await user.save({ validateBeforeSave: false });
 
@@ -189,6 +256,7 @@ export const refresh = async (req: Request, res: Response, next: NextFunction): 
       success: true,
       accessToken,
       refreshToken: newRefreshToken,
+      accessMode: mode,
       expiresIn: config.jwt.accessExpiresIn,
     });
   } catch (e) {

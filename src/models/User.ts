@@ -5,6 +5,8 @@ export interface IUser extends Document {
   email: string;
   phoneNumber: string;
   passwordHash: string;
+  /** Separate bcrypt hash for read-only app login (same email). Not the main password. */
+  viewerPasswordHash?: string;
   emailVerified: boolean;
   verificationToken?: string;
   verificationTokenExpires?: Date;
@@ -50,6 +52,7 @@ const userSchema = new Schema<IUser>(
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     phoneNumber: { type: String, required: true, unique: true, trim: true },
     passwordHash: { type: String, required: true, select: false },
+    viewerPasswordHash: { type: String, select: false },
     emailVerified: { type: Boolean, default: false },
     verificationToken: { type: String, select: false },
     verificationTokenExpires: { type: Date, select: false },

@@ -1,23 +1,23 @@
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { config } from '../config';
-import { JwtPayload } from '../types';
+import { AccessMode, JwtPayload } from '../types';
 
 // Use seconds for compatibility with @types/jsonwebtoken (1d = 86400, 30d = 2592000)
 const accessExpiresInSeconds = 86400;
 const refreshExpiresInSeconds = 2592000;
 
-export const generateAccessToken = (userId: string): string => {
+export const generateAccessToken = (userId: string, accessMode: AccessMode = 'full'): string => {
   return jwt.sign(
-    { userId, type: 'access' } as JwtPayload,
+    { userId, type: 'access', accessMode } as JwtPayload,
     config.jwt.accessSecret,
     { expiresIn: accessExpiresInSeconds }
   );
 };
 
-export const generateRefreshToken = (userId: string): string => {
+export const generateRefreshToken = (userId: string, accessMode: AccessMode = 'full'): string => {
   return jwt.sign(
-    { userId, type: 'refresh' } as JwtPayload,
+    { userId, type: 'refresh', accessMode } as JwtPayload,
     config.jwt.refreshSecret,
     { expiresIn: refreshExpiresInSeconds }
   );

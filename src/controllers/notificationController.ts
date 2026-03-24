@@ -576,13 +576,17 @@ export const capturePaymentNotificationFromAndroid = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { packageName, title, message, receivedAt } = req.body ?? {};
+    const { packageName, title, message, receivedAt, notificationKey: notificationKeyRaw } = req.body ?? {};
     if (!packageName || !title || !message) {
       res.status(200).json({ success: false, reason: 'Missing fields' });
       return;
     }
 
     const received = receivedAt ? new Date(receivedAt) : new Date();
+    const notificationKey =
+      typeof notificationKeyRaw === 'string' && notificationKeyRaw.trim().length > 0
+        ? notificationKeyRaw.trim().slice(0, 512)
+        : '';
 
     const parsed = _parseAndroidPaymentNotification({
       packageName: String(packageName),
@@ -600,6 +604,17 @@ export const capturePaymentNotificationFromAndroid = async (
     if (!user) {
       res.status(201).json({ success: true, data: null });
       return;
+    }
+
+    if (notificationKey) {
+      const existingByKey = await PaymentNotification.findOne({
+        userId: req.userId,
+        notificationKey,
+      }).lean();
+      if (existingByKey) {
+        res.status(201).json({ success: true, data: existingByKey });
+        return;
+      }
     }
 
     const txId = parsed.transactionId ? String(parsed.transactionId).trim().toLowerCase() : '';
@@ -638,6 +653,7 @@ export const capturePaymentNotificationFromAndroid = async (
       currency: parsed.currency,
       transactionId: txId || undefined,
       contentHash,
+      ...(notificationKey ? { notificationKey } : {}),
       receivedAt: received,
     });
 

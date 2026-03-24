@@ -1,8 +1,7 @@
 import { Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { config } from '../config';
-import { AuthRequest } from '../types';
-import { JwtPayload } from '../types';
+import { AccessMode, AuthRequest, JwtPayload } from '../types';
 import { UnauthorizedError } from '../utils/errors';
 
 export const authenticate = (req: AuthRequest, _res: Response, next: NextFunction): void => {
@@ -21,6 +20,8 @@ export const authenticate = (req: AuthRequest, _res: Response, next: NextFunctio
       return;
     }
     req.userId = decoded.userId;
+    const mode = decoded.accessMode;
+    req.accessMode = mode === 'viewer' ? 'viewer' : ('full' as AccessMode);
     next();
   } catch {
     next(new UnauthorizedError('Invalid or expired access token'));

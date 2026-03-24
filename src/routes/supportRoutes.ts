@@ -1,11 +1,14 @@
 import { Router } from 'express';
-import { authenticate } from '../middleware';
+import { authenticate, requireFullAccess } from '../middleware';
 import * as supportController from '../controllers/supportController';
 
 const router = Router();
 
-router.get('/config', authenticate, supportController.getSupportConfig);
-router.get('/messages', authenticate, supportController.listMySupportMessages);
-router.post('/messages', authenticate, supportController.postSupportMessage);
+router.use(authenticate);
+router.use(requireFullAccess);
+
+router.get('/config', supportController.getSupportConfig);
+router.get('/messages', supportController.listMySupportMessages);
+router.post('/messages', supportController.postSupportMessage);
 
 export default router;

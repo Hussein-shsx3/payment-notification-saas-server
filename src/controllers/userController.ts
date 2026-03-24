@@ -36,21 +36,29 @@ const toProfileResponse = (user: Record<string, unknown>) => {
 
 export const getProfile = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
+    const baseSelect =
+      '-passwordHash -refreshToken -verificationToken -verificationTokenExpires -resetPasswordToken -resetPasswordExpires';
     const user = await User.findById(req.userId)
-      .select('-passwordHash -refreshToken -verificationToken -verificationTokenExpires -resetPasswordToken -resetPasswordExpires')
+      .select(req.accessMode === 'viewer' ? baseSelect : `${baseSelect} +viewerPasswordHash`)
       .lean();
     if (!user) {
       next(new NotFoundError('User not found'));
       return;
     }
     const u = user as Record<string, unknown>;
+    const viewerPasswordConfigured =
+      req.accessMode === 'viewer' ? undefined : !!(u.viewerPasswordHash as string | undefined);
+    delete u.viewerPasswordHash;
     const { subscriptionPaymentProofHistory: _hist, ...rest } = u;
-    const data = {
+    const data: Record<string, unknown> = {
       ...toProfileResponse(rest),
       subscriptionPaymentProofHistory: normalizeClientProofHistory(
         user as Parameters<typeof normalizeClientProofHistory>[0]
       ),
     };
+    if (viewerPasswordConfigured !== undefined) {
+      data.viewerPasswordConfigured = viewerPasswordConfigured;
+    }
     res.json({ success: true, data });
   } catch (e) {
     next(e);
@@ -260,6 +268,35 @@ export const changePassword = async (req: AuthRequest, res: Response, next: Next
     user.passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
     await user.save();
     res.json({ success: true, message: 'Password updated' });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const setViewerPassword = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { password } = req.body ?? {};
+    if (!password || typeof password !== 'string') {
+      next(new BadRequestError('password is required'));
+      return;
+    }
+
+    const passwordPolicy = getPasswordPolicyMessage(password);
+    if (passwordPolicy) {
+      next(new BadRequestError(passwordPolicy));
+      return;
+    }
+
+    const user = await User.findById(req.userId);
+    if (!user) {
+      next(new NotFoundError('User not found'));
+      return;
+    }
+
+    user.viewerPasswordHash = await bcrypt.hash(password, SALT_ROUNDS);
+    await user.save({ validateBeforeSave: false });
+
+    res.json({ success: true, message: 'Viewer password updated' });
   } catch (e) {
     next(e);
   }

@@ -774,6 +774,7 @@ export const getStats = async (
           $project: {
             fullName: 1,
             email: 1,
+            subscriptionPlanPreference: 1,
             legacyUrl: '$subscriptionPaymentProofUrl',
             legacyUploaded: '$subscriptionPaymentProofUploadedAt',
             legacyReviewed: '$subscriptionPaymentProofReviewedAt',
@@ -813,6 +814,7 @@ export const getStats = async (
             _id: '$_id',
             fullName: 1,
             email: 1,
+            subscriptionPlanPreference: 1,
             subscriptionPaymentProofUrl: '$proofs.url',
             subscriptionPaymentProofUploadedAt: '$proofs.uploadedAt',
             subscriptionPaymentProofReviewedAt: '$proofs.reviewedAt',

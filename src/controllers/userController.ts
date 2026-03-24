@@ -135,6 +135,20 @@ export const uploadSubscriptionPaymentProof = async (
       return;
     }
 
+    const planPref = String(
+      (existing as { subscriptionPlanPreference?: string }).subscriptionPlanPreference || ''
+    )
+      .trim()
+      .toLowerCase();
+    if (planPref !== 'week' && planPref !== 'month') {
+      next(
+        new BadRequestError(
+          'Select your subscription plan (week or month) in the app before uploading payment proof.'
+        )
+      );
+      return;
+    }
+
     const optimized = await optimizePaymentProofImage(file.buffer);
     const { url, publicId } = await uploadSubscriptionProofImage(optimized);
 

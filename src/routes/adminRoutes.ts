@@ -29,6 +29,10 @@ router.patch(
   adminController.setSubscriptionPaymentProofReviewed
 );
 router.delete(
+  '/users/:userId/subscription-payment-proof/:proofId',
+  adminController.deleteSubscriptionPaymentProofById
+);
+router.delete(
   '/users/:userId/subscription-payment-proof',
   adminController.deleteSubscriptionPaymentProof
 );

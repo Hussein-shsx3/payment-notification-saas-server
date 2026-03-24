@@ -270,7 +270,116 @@ export const setSubscriptionPaymentProofReviewed = async (
   }
 };
 
-/** Deletes subscription payment proof image only (Cloudinary + user fields). */
+/** Deletes one proof by subdocument id (`legacy` = single-url users without history array). */
+export const deleteSubscriptionPaymentProofById = async (
+  req: AdminAuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { userId, proofId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      next(new BadRequestError('Invalid user id'));
+      return;
+    }
+
+    const user = await User.findById(userId).select(
+      '+subscriptionPaymentProofPublicId subscriptionPaymentProofUrl subscriptionPaymentProofUploadedAt subscriptionPaymentProofReviewedAt subscriptionPaymentProofHistory'
+    );
+    if (!user) {
+      next(new NotFoundError('User not found'));
+      return;
+    }
+
+    const hasHist =
+      Array.isArray(user.subscriptionPaymentProofHistory) &&
+      user.subscriptionPaymentProofHistory.length > 0;
+
+    if (proofId === 'legacy') {
+      if (hasHist || !user.subscriptionPaymentProofUrl) {
+        next(new BadRequestError('Proof not found'));
+        return;
+      }
+      if (user.subscriptionPaymentProofPublicId) {
+        await destroySubscriptionProofImage(String(user.subscriptionPaymentProofPublicId));
+      }
+      user.subscriptionPaymentProofUrl = undefined;
+      user.subscriptionPaymentProofPublicId = undefined;
+      user.subscriptionPaymentProofUploadedAt = undefined;
+      user.subscriptionPaymentProofReviewedAt = undefined;
+      user.subscriptionPaymentProofHistory = undefined;
+      await user.save();
+    } else {
+      if (!mongoose.Types.ObjectId.isValid(proofId)) {
+        next(new BadRequestError('Invalid proof id'));
+        return;
+      }
+      const hist = (user.subscriptionPaymentProofHistory || []) as Array<{
+        _id?: mongoose.Types.ObjectId;
+        url: string;
+        publicId?: string;
+        uploadedAt?: Date;
+        reviewedAt?: Date;
+      }>;
+      const idx = hist.findIndex((h) => h._id && String(h._id) === proofId);
+      if (idx === -1) {
+        next(new NotFoundError('Proof not found'));
+        return;
+      }
+      const removed = hist[idx];
+      if (removed.publicId) {
+        await destroySubscriptionProofImage(String(removed.publicId));
+      }
+      hist.splice(idx, 1);
+      user.subscriptionPaymentProofHistory =
+        hist.length > 0 ? (hist as typeof user.subscriptionPaymentProofHistory) : undefined;
+
+      if (!hist.length) {
+        user.subscriptionPaymentProofUrl = undefined;
+        user.subscriptionPaymentProofPublicId = undefined;
+        user.subscriptionPaymentProofUploadedAt = undefined;
+        user.subscriptionPaymentProofReviewedAt = undefined;
+      } else {
+        const sorted = [...hist].sort(
+          (a, b) =>
+            new Date(b.uploadedAt || 0).getTime() - new Date(a.uploadedAt || 0).getTime()
+        );
+        const latest = sorted[0];
+        user.subscriptionPaymentProofUrl = latest.url;
+        user.subscriptionPaymentProofPublicId = latest.publicId;
+        user.subscriptionPaymentProofUploadedAt = latest.uploadedAt;
+        user.subscriptionPaymentProofReviewedAt = latest.reviewedAt ?? undefined;
+      }
+      await user.save();
+    }
+
+    const out = await User.findById(userId)
+      .select(
+        '-passwordHash -refreshToken -verificationToken -verificationTokenExpires -resetPasswordToken -resetPasswordExpires -subscriptionPaymentProofPublicId'
+      )
+      .lean();
+
+    if (!out) {
+      next(new NotFoundError('User not found'));
+      return;
+    }
+    const u = out as Record<string, unknown>;
+    const { subscriptionPaymentProofHistory: _h, ...rest } = u;
+    res.json({
+      success: true,
+      data: {
+        ...rest,
+        subscriptionPaymentProofHistory: normalizeClientProofHistory(
+          out as Parameters<typeof normalizeClientProofHistory>[0]
+        ),
+      },
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
+/** Deletes all subscription payment proof images (Cloudinary + user fields). */
 export const deleteSubscriptionPaymentProof = async (
   req: AdminAuthRequest,
   res: Response,
@@ -818,6 +927,13 @@ export const getStats = async (
             subscriptionPaymentProofUrl: '$proofs.url',
             subscriptionPaymentProofUploadedAt: '$proofs.uploadedAt',
             subscriptionPaymentProofReviewedAt: '$proofs.reviewedAt',
+            proofId: {
+              $cond: {
+                if: { $ne: [{ $ifNull: ['$proofs._id', null] }, null] },
+                then: { $toString: '$proofs._id' },
+                else: 'legacy',
+              },
+            },
           },
         },
       ]),

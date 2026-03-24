@@ -149,17 +149,28 @@ export const updateSubscription = async (
       });
     }
 
-    const endStr = periodEnd.toISOString().slice(0, 10);
-    const startStr = periodStart.toISOString().slice(0, 10);
-    const notifTitle = 'Subscription updated';
-    const notifMessage = `Your subscription has been updated. It is active from ${startStr} to ${endStr} (UTC).`;
+    const endFormatted = periodEnd.toLocaleString('en-GB', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'UTC',
+      timeZoneName: 'short',
+    });
+    const notifTitle = 'Payment received — subscription active';
+    const notifMessage = `Your subscription payment was applied successfully. Your access remains active until ${endFormatted}.`;
     await Notification.create({
       userId: user._id,
       title: notifTitle,
       message: notifMessage,
       type: 'system',
     });
-    await sendPushNotificationToUser(userId, { title: notifTitle, body: notifMessage });
+    await sendPushNotificationToUser(userId, {
+      title: 'Subscription renewed',
+      body: `Payment successful. Active until ${endFormatted}.`,
+    });
 
     res.json({ success: true, data: user });
   } catch (e) {

@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto';
 import { Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
 import { User } from '../models';
@@ -5,9 +6,12 @@ import { BadRequestError, UnauthorizedError, NotFoundError } from '../utils/erro
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken, randomVerificationCode } from '../utils/tokens';
 import { normalizeVerificationInput } from '../utils/verificationInput';
 import { config } from '../config';
-import { sendVerificationEmail } from '../services/verificationEmail';
+import { sendPasswordResetEmail, sendVerificationEmail } from '../services/verificationEmail';
 import { getPasswordPolicyMessage } from '../utils/passwordPolicy';
 import { VERIFICATION_TTL_MS } from '../constants/verification';
+
+/** Password reset token lifetime (email link). */
+const PASSWORD_RESET_TTL_MS = 24 * 60 * 60 * 1000;
 
 const SALT_ROUNDS = 12;
 
@@ -194,15 +198,47 @@ export const refresh = async (req: Request, res: Response, next: NextFunction): 
 
 export const forgotPassword = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { email } = req.body;
+    const emailRaw = req.body?.email;
+    const email = String(emailRaw ?? '')
+      .trim()
+      .toLowerCase();
     if (!email) {
       next(new BadRequestError('Email is required'));
       return;
     }
-    res.json({
+
+    const genericResponse = {
       success: true,
-      message: 'Password reset via email is currently disabled.',
+      message:
+        'If an account exists for this email, you will receive a password reset link. It expires in 24 hours.',
+    };
+
+    const user = await User.findOne({ email }).select('+resetPasswordToken +resetPasswordExpires');
+    if (!user) {
+      res.json(genericResponse);
+      return;
+    }
+
+    const token = randomBytes(32).toString('hex');
+    user.resetPasswordToken = token;
+    user.resetPasswordExpires = new Date(Date.now() + PASSWORD_RESET_TTL_MS);
+    await user.save({ validateBeforeSave: false });
+
+    const locale: 'en' | 'ar' = req.body?.locale === 'ar' || req.body?.language === 'ar' ? 'ar' : 'en';
+
+    setImmediate(() => {
+      void sendPasswordResetEmail(email, token, locale)
+        .then((emailResult) => {
+          if (!emailResult.sent) {
+            console.error('[forgotPassword] Reset email not sent:', emailResult.detail ?? 'unknown');
+          }
+        })
+        .catch((err) => {
+          console.error('[forgotPassword] Reset email threw:', err);
+        });
     });
+
+    res.json(genericResponse);
   } catch (e) {
     next(e);
   }

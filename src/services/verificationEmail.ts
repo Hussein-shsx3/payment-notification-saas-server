@@ -213,6 +213,128 @@ function parseBrevoError(text: string): string {
 /**
  * Sends verification email via Brevo. `locale` picks primary subject line; body is bilingual (EN + AR).
  */
+function buildPasswordResetBodies(
+  toEmail: string,
+  token: string,
+  locale: 'en' | 'ar'
+): { subject: string; textContent: string; htmlContent: string } {
+  const webBase = normalizeFrontendBase(process.env.FRONTEND_URL || config.urls.frontend);
+  const resetUrl = `${webBase}/app/reset-password?token=${encodeURIComponent(token)}`;
+  const appName = process.env.APP_NAME || 'Payment Notify';
+
+  const en = {
+    subject: `${appName} — reset your password`,
+    title: 'Reset your password',
+    lead: 'We received a request to reset your password. The link below is valid for 24 hours.',
+    button: 'Set a new password',
+    footer: 'If you did not request this, you can ignore this email. Your password will not change.',
+  };
+
+  const ar = {
+    subject: `${appName} — إعادة تعيين كلمة المرور`,
+    title: 'إعادة تعيين كلمة المرور',
+    lead: 'وصلنا طلب لإعادة تعيين كلمة المرور. الرابط أدناه صالح لمدة 24 ساعة.',
+    button: 'تعيين كلمة مرور جديدة',
+    footer: 'إذا لم تطلب ذلك، يمكنك تجاهل هذه الرسالة. لن تتغير كلمة المرور.',
+  };
+
+  const L = locale === 'ar' ? ar : en;
+
+  const htmlContent = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head>
+<body style="margin:0;padding:0;background:${C.bg};">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:${C.bg};padding:24px 12px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" style="max-width:560px;background:${C.panel};border:1px solid ${C.border};border-radius:12px;overflow:hidden;">
+          <tr>
+            <td style="padding:20px 24px;border-bottom:1px solid ${C.border};">
+              <div style="font-size:18px;font-weight:600;color:${C.accent};">${esc(appName)}</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:24px;">
+              <p style="color:${C.text};font-size:16px;font-weight:600;margin:0 0 8px 0;">${esc(en.title)}</p>
+              <p style="color:${C.muted};font-size:14px;line-height:1.5;margin:0 0 16px 0;">${esc(en.lead)}</p>
+              <div style="text-align:center;margin:20px 0;">
+                <a href="${esc(resetUrl)}" style="display:inline-block;padding:14px 24px;background:${C.accent};color:#020617;font-weight:600;border-radius:8px;text-decoration:none;font-size:15px;">${esc(en.button)}</a>
+              </div>
+              <p style="color:${C.muted};font-size:12px;line-height:1.5;margin:16px 0 0 0;word-break:break-all;">${esc(resetUrl)}</p>
+              <p style="color:${C.muted};font-size:12px;margin:20px 0 0 0;line-height:1.5;">${esc(en.footer)}</p>
+              <hr style="border:none;border-top:1px solid ${C.border};margin:24px 0;" />
+              <p style="color:${C.text};font-size:16px;font-weight:600;margin:0 0 8px 0;direction:rtl;text-align:right;">${esc(ar.title)}</p>
+              <p style="color:${C.muted};font-size:14px;line-height:1.6;margin:0 0 16px 0;direction:rtl;text-align:right;">${esc(ar.lead)}</p>
+              <div style="text-align:center;margin:20px 0;"><a href="${esc(resetUrl)}" style="display:inline-block;padding:14px 24px;background:${C.accent};color:#020617;font-weight:600;border-radius:8px;text-decoration:none;font-size:15px;">${esc(ar.button)}</a></div>
+              <p style="color:${C.muted};font-size:12px;margin:16px 0 0 0;direction:rtl;text-align:right;word-break:break-all;">${esc(resetUrl)}</p>
+              <p style="color:${C.muted};font-size:12px;margin:16px 0 0 0;line-height:1.5;direction:rtl;text-align:right;">${esc(ar.footer)}</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  const textContent = `${en.title}\n\n${en.lead}\n\n${resetUrl}\n\n${en.footer}\n\n---\n\n${ar.title}\n\n${ar.lead}\n\n${resetUrl}\n\n${ar.footer}`;
+
+  return {
+    subject: L.subject,
+    textContent,
+    htmlContent,
+  };
+}
+
+/** Password reset link sent from POST /auth/forgot-password. Link expires in 24h (set on user record). */
+export async function sendPasswordResetEmail(
+  toEmail: string,
+  token: string,
+  locale: 'en' | 'ar' = 'en'
+): Promise<VerificationEmailResult> {
+  const { subject, textContent, htmlContent } = buildPasswordResetBodies(toEmail, token, locale);
+  const apiKey = brevoApiKey();
+  const sender = getBrevoSender();
+
+  if (!apiKey || !sender) {
+    console.warn('[mail] Brevo not configured — password reset email not sent');
+    return {
+      sent: false,
+      detail: 'Set BREVO_API_KEY and sender (see https://www.brevo.com)',
+    };
+  }
+
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'api-key': apiKey,
+    },
+    body: JSON.stringify({
+      sender: { name: sender.name, email: sender.email },
+      to: [{ email: toEmail }],
+      subject,
+      textContent,
+      htmlContent,
+    }),
+  });
+
+  if (res.ok) {
+    const j = (await res.json().catch(() => ({}))) as { messageId?: string };
+    console.log('[mail] Password reset →', toEmail, 'messageId=', j.messageId ?? 'n/a');
+    return { sent: true };
+  }
+
+  const errText = await res.text();
+  const parsed = parseBrevoError(errText);
+  console.error('[mail] Password reset Brevo HTTP', res.status, parsed);
+  return {
+    sent: false,
+    detail: `Brevo ${res.status}: ${parsed}`,
+  };
+}
+
 export async function sendVerificationEmail(
   toEmail: string,
   code: string,

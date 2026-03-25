@@ -338,122 +338,6 @@ function _isSentPayment(input: string): boolean {
   ]);
 }
 
-/** Incoming + outgoing + neutral money movement (we exclude only internal account↔account above). */
-function _isPaymentIntent(input: string): boolean {
-  return _containsAny(input, [
-    // English — received
-    'received',
-    'credited',
-    'deposited',
-    'you received',
-    'payment received',
-    'transfer received',
-    'incoming',
-    'you got',
-    'account credited',
-    'credit alert',
-    'cash in',
-    // English — sent
-    'you sent',
-    'you transferred',
-    'you paid',
-    'sent to',
-    'payment to',
-    'transfer to',
-    'paid to',
-    'outgoing transfer',
-    'money sent',
-    'transaction sent',
-    'deducted for',
-    'debited for',
-    'debited',
-    'withdrawal',
-    'cash out',
-    // English — common bank templates (short / currency-led)
-    'transaction',
-    'purchase',
-    'spent',
-    'amount',
-    'debit',
-    'nis',
-    'ils',
-    'jod',
-    'usd',
-    'gbp',
-    'eur',
-    // Arabic — received
-    'تم استلام',
-    'تم ايداع',
-    'تم إيداع',
-    'استلمت',
-    'وصلك',
-    'تم تحويل لك',
-    'تم الايداع',
-    'تم الإيداع',
-    'وردت',
-    'تم استقبال',
-    'حوالة واردة',
-    'حوالة واردة لحسابك',
-    'واردة لحسابك',
-    'واردة الى حسابك',
-    'واردة إلى حسابك',
-    'تمت إضافة',
-    'تم اضافه',
-    'اضافة الى حسابك',
-    'إضافة إلى حسابك',
-    'تم اضافة',
-    'تم إضافة',
-    'إشعار إيداع',
-    'اشعار ايداع',
-    // Arabic — sent
-    'تم ارسال',
-    'ارسلت',
-    'قمت بارسال',
-    'تم الدفع لـ',
-    'تم الدفع إلى',
-    'تم الدفع ل',
-    'دفعت',
-    'تم خصم لـ',
-    'تم التحويل الى',
-    'تم التحويل إلى',
-    'حولت',
-    'ارسال الى',
-    'إرسال إلى',
-    'حوالة صادرة',
-    'صادرة من حسابك',
-    'تم سحب',
-    'سحب',
-    'شراء',
-    // Palestine Bank / local
-    'تحويل بنكي',
-    'تحويل دفع لصديق',
-    'تم بنجاح',
-    'بنجاح',
-    'عملية ناجحة',
-    'إشعار عملية',
-    'اشعار عملية',
-    'عملية مالية',
-    'شيكل',
-    'شيقل',
-    'نيس',
-    'موبايل',
-    'بمبلغ',
-    // General
-    'payment',
-    'transfer',
-    'deposit',
-    'credited',
-    'تحويل',
-    'ايداع',
-    'حوالة',
-    'دفعة',
-    'مبلغ',
-    'عملية',
-    'wallet',
-    'محفظة',
-  ]);
-}
-
 function _isFalsePositive(input: string): boolean {
   return _containsAny(input, [
     'otp',
@@ -468,6 +352,165 @@ function _isFalsePositive(input: string): boolean {
     'رمز التحقق',
     'رمز التأكيد',
     'code:',
+    'two-factor',
+    'authenticator',
+    'signed in from',
+    'new device',
+  ]);
+}
+
+/** Non-bank notifications that often contain digits (games, social, weather). */
+function _isLikelyNonPaymentJunk(input: string): boolean {
+  const lower = input.toLowerCase();
+  return _containsAny(lower, [
+    'steps',
+    'calories',
+    'followers',
+    'likes',
+    'views',
+    'score',
+    'level ',
+    'weather',
+    'youtube',
+    'tiktok',
+    'instagram',
+    'delivery',
+    'tracking',
+    'promo code',
+    'خصم',
+    'عرض',
+    'طقس',
+    'متابع',
+    'لعبة',
+    'نقاط',
+  ]);
+}
+
+function _isKnownPaymentAppPackage(packageLower: string): boolean {
+  return _containsAny(packageLower, [
+    'palpay',
+    'jawwal',
+    'jawwalpay',
+    'bankofpalestine',
+    'bop',
+    'com.bop',
+    'com.palpay',
+    'ps.jawwal',
+    'albop',
+    'efinance',
+    'palestinebank',
+  ]);
+}
+
+function _isSmsAppPackage(packageLower: string): boolean {
+  return _containsAny(packageLower, [
+    'messaging',
+    'mms',
+    'sms',
+    'message',
+    'miui.mms',
+    'huawei.message',
+    'oneplus.mms',
+    'coloros.mms',
+  ]);
+}
+
+/** Strong money cues — aligned with Android [shouldRoughlyLookLikePayment] / SMS+bank path. */
+function _hasStrongPaymentSignal(fullTextLower: string): boolean {
+  return _containsAny(fullTextLower, [
+    'received',
+    'credited',
+    'deposited',
+    'payment received',
+    'transfer received',
+    'you received',
+    'account credited',
+    'credit alert',
+    'cash in',
+    'you sent',
+    'you transferred',
+    'you paid',
+    'sent to',
+    'payment to',
+    'transfer to',
+    'paid to',
+    'outgoing transfer',
+    'money sent',
+    'transaction sent',
+    'deducted',
+    'debited',
+    'withdrawal',
+    'cash out',
+    'تم استلام',
+    'تم ايداع',
+    'تم إيداع',
+    'استلمت',
+    'وصلك',
+    'وردت',
+    'تم استقبال',
+    'حوالة واردة',
+    'واردة لحسابك',
+    'واردة الى حسابك',
+    'واردة إلى حسابك',
+    'تم تحويل لك',
+    'تم الايداع',
+    'تم الإيداع',
+    'تمت إضافة',
+    'تم اضافه',
+    'اضافة الى حسابك',
+    'إضافة إلى حسابك',
+    'تم اضافة',
+    'تم إضافة',
+    'إشعار إيداع',
+    'اشعار ايداع',
+    'تم ارسال',
+    'ارسلت',
+    'تم الدفع لـ',
+    'تم الدفع إلى',
+    'تم الدفع ل',
+    'دفعت',
+    'تم خصم',
+    'تم التحويل الى',
+    'تم التحويل إلى',
+    'حولت',
+    'حوالة صادرة',
+    'صادرة من حسابك',
+    'تم سحب',
+    'شراء',
+    'تحويل بنكي',
+    'تحويل دفع لصديق',
+    'عملية ناجحة',
+    'إشعار عملية',
+    'اشعار عملية',
+    'عملية مالية',
+    'حسابك',
+    'لحسابك',
+    'بمبلغ',
+    'مبلغ',
+    'رصيد',
+    'شيكل',
+    'شيقل',
+    'نيس',
+    'payment',
+    'transfer',
+    'deposit',
+    'wallet',
+    'محفظة',
+  ]);
+}
+
+function _hasBankOperationHints(fullTextLower: string): boolean {
+  return _containsAny(fullTextLower, [
+    'تحويل بنكي',
+    'بنك فلسطين',
+    'شيكل',
+    'شيقل',
+    'نيس',
+    '₪',
+    'ils',
+    'nis',
+    'jod',
+    'usd',
   ]);
 }
 
@@ -527,13 +570,36 @@ function _parseAndroidPaymentNotification(params: {
 
   if (_isExcludedPackage(packageLower)) return null;
   if (_isFalsePositive(haystack)) return null;
+  if (_isLikelyNonPaymentJunk(haystack)) return null;
 
   const combinedLower = combinedNormalized.toLowerCase();
   if (_isInternalAccountTransferOnly(combinedLower)) return null;
   if (_isCardMovementExcluded(combinedLower)) return null;
 
   const fullText = `${titleLower} ${messageLower}`;
-  if (!_isPaymentIntent(fullText)) return null;
+  const fullTextLower = fullText;
+
+  const knownPayment = _isKnownPaymentAppPackage(packageLower);
+  const smsPkg = _isSmsAppPackage(packageLower);
+  const strong = _hasStrongPaymentSignal(fullTextLower);
+  const bankOpHints = _hasBankOperationHints(fullTextLower);
+  const bankKw =
+    fullTextLower.includes('bank') ||
+    fullTextLower.includes('بنك') ||
+    fullTextLower.includes('bop') ||
+    fullTextLower.includes('palestine') ||
+    fullTextLower.includes('فلسطين');
+  const iburaq = _containsAny(haystack, ['iburaq', 'ايبرق', 'البراق']);
+
+  if (knownPayment) {
+    if (!strong && !bankOpHints) return null;
+  } else if (smsPkg && iburaq && strong) {
+    // Iburaq SMS rail
+  } else if (smsPkg && bankKw && strong) {
+    // Generic bank SMS
+  } else {
+    return null;
+  }
 
   const direction = _inferPaymentDirection(fullText);
 

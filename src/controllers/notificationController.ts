@@ -429,7 +429,12 @@ function _isPalestineBankIncomingAccountLine(fullTextLower: string): boolean {
     t.includes('تم إضافة') ||
     t.includes('تم اضافة') ||
     t.includes('قيد إيداع') ||
-    t.includes('اضافة مبلغ');
+    t.includes('اضافة مبلغ') ||
+    t.includes('رصيدكم') ||
+    t.includes('المتوفر') ||
+    t.includes('iburaq') ||
+    t.includes('ايبرق') ||
+    t.includes('البراق');
   const bankOrMoney =
     t.includes('bop') ||
     t.includes('بنك') ||
@@ -443,8 +448,29 @@ function _isPalestineBankIncomingAccountLine(fullTextLower: string): boolean {
     t.includes('بمبلغ') ||
     t.includes('بقيمة') ||
     t.includes('شيكل') ||
-    t.includes('شيقل');
+    t.includes('شيقل') ||
+    t.includes('رصيد');
   return incomingCue && bankOrMoney;
+}
+
+/** Iburaq SMS tray: often no "bank"/"jawwal" in body — only حوالة واردة + مبلغ/شيكل/رصيد. */
+function _isSmsIburaqIncomingWireLine(fullTextLower: string): boolean {
+  const t = fullTextLower;
+  if (!/\d/.test(t)) return false;
+  const wire =
+    t.includes('حوالة واردة') ||
+    t.includes('واردة لحسابك') ||
+    t.includes('واردة إلى حسابك') ||
+    t.includes('واردة الى حسابك');
+  const money =
+    t.includes('بمبلغ') ||
+    t.includes('مبلغ') ||
+    t.includes('شيكل') ||
+    t.includes('شيقل') ||
+    t.includes('رصيد') ||
+    t.includes('رصيدكم') ||
+    t.includes('المتوفر');
+  return wire && money;
 }
 
 function _isLikelyNonPaymentJunk(input: string): boolean {
@@ -499,16 +525,25 @@ function _isKnownPaymentAppPackage(packageLower: string): boolean {
 }
 
 function _isSmsAppPackage(packageLower: string): boolean {
-  return _containsAny(packageLower, [
-    'messaging',
-    'mms',
-    'sms',
-    'message',
-    'miui.mms',
-    'huawei.message',
-    'oneplus.mms',
-    'coloros.mms',
-  ]);
+  if (!packageLower) return false;
+  if (
+    _containsAny(packageLower, [
+      'com.google.android.apps.messaging',
+      'com.samsung.android.messaging',
+      'com.android.mms',
+      'com.android.messaging',
+      'miui.mms',
+      'huawei.message',
+      'oneplus.mms',
+      'coloros.mms',
+    ])
+  ) {
+    return true;
+  }
+  if (packageLower.includes('messaging')) return true;
+  if (packageLower.includes('mms')) return true;
+  if (packageLower.includes('sms') && packageLower.includes('android')) return true;
+  return false;
 }
 
 /** Strong money cues — aligned with Android [shouldRoughlyLookLikePayment] / SMS+bank path. */
@@ -697,18 +732,10 @@ function _inferSourceFallback(packageNameLower: string, messageLower: string): s
     return 'Palestine Bank';
   }
 
-  const isSmsApp = _containsAny(packageNameLower, [
-    'com.google.android.apps.messaging',
-    'com.samsung.android.messaging',
-    'com.android.mms',
-    'com.android.messaging',
-    'com.miui.mms',
-    'com.huawei.message',
-    'com.oneplus.mms',
-    'com.coloros.mms',
-  ]);
-  if (isSmsApp && _containsAny(messageLower, ['iburaq', 'ايبرق', 'البراق'])) return 'Iburaq';
-  if (isSmsApp) return 'SMS Payment';
+  if (_isSmsAppPackage(packageNameLower) && _containsAny(messageLower, ['iburaq', 'ايبرق', 'البراق'])) {
+    return 'Iburaq';
+  }
+  if (_isSmsAppPackage(packageNameLower)) return 'SMS Payment';
   return 'Other';
 }
 
@@ -768,6 +795,8 @@ function _parseAndroidPaymentNotification(params: {
     // Iburaq SMS rail
   } else if (smsPkg && bankKw && (strong || _looksLikeMoneyFingerprintFromKnownBankApp(fullTextLower))) {
     // Generic bank SMS
+  } else if (smsPkg && _isSmsIburaqIncomingWireLine(fullTextLower)) {
+    // Iburaq SMS tray: حوالة واردة … بمبلغ … شيكل — often no "bank"/"jawwal" in body
   } else if (_isPalestineBankTransferLine(fullTextLower) && (strong || bankOpHints)) {
     // BOP mobile template; package name may not match known substrings on some devices
   } else if (

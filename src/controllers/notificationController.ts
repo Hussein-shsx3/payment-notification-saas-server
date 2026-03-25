@@ -310,7 +310,11 @@ function _isIncomingIndicators(input: string): boolean {
     'واردة',
     'للمحفظة',
     'إلى محفظتك',
-    'تحويل بنكي',
+    'has been accepted',
+    'has been credited',
+    'accepted with',
+    'money transfer',
+    'شحن',
   ]);
 }
 
@@ -396,6 +400,51 @@ function _isPalestineBankFriendPaymentLine(fullTextLower: string): boolean {
     t.includes('nis') ||
     t.includes('₪');
   return friend && money;
+}
+
+/**
+ * Incoming money to BOP account / wallet (e.g. شحن محفظة, حوالة واردة, إيداع من جوال باي).
+ * Outgoing uses different wording; this path catches receive-side tray text that misses other gates.
+ */
+function _isPalestineBankIncomingAccountLine(fullTextLower: string): boolean {
+  const t = fullTextLower;
+  if (!/\d/.test(t)) return false;
+  const incomingCue =
+    t.includes('شحن') ||
+    t.includes('حوالة واردة') ||
+    t.includes('واردة لحسابك') ||
+    t.includes('واردة إلى حسابك') ||
+    t.includes('واردة الى حسابك') ||
+    t.includes('إيداع') ||
+    t.includes('ايداع') ||
+    t.includes('استلام') ||
+    t.includes('استقبال') ||
+    t.includes('من جوال') ||
+    t.includes('jawwal pay') ||
+    t.includes('جوال باي') ||
+    t.includes('credited') ||
+    t.includes('deposited') ||
+    t.includes('has been credited') ||
+    t.includes('has been accepted') ||
+    t.includes('تم إضافة') ||
+    t.includes('تم اضافة') ||
+    t.includes('قيد إيداع') ||
+    t.includes('اضافة مبلغ');
+  const bankOrMoney =
+    t.includes('bop') ||
+    t.includes('بنك') ||
+    t.includes('bank') ||
+    t.includes('فلسطين') ||
+    t.includes('palestine') ||
+    t.includes('ils') ||
+    t.includes('nis') ||
+    t.includes('₪') ||
+    t.includes('مبلغ') ||
+    t.includes('بمبلغ') ||
+    t.includes('بقيمة') ||
+    t.includes('شيكل') ||
+    t.includes('شيقل');
+  return incomingCue && bankOrMoney;
 }
 
 function _isLikelyNonPaymentJunk(input: string): boolean {
@@ -549,6 +598,16 @@ function _hasStrongPaymentSignal(fullTextLower: string): boolean {
     'deposit',
     'wallet',
     'محفظة',
+    'شحن',
+    'شحن محفظة',
+    'حساب جاري',
+    'بقيمة',
+    'من جوال',
+    'jawwal pay',
+    'جوال باي',
+    'has been accepted',
+    'has been credited',
+    'transaction',
   ]);
 }
 
@@ -609,6 +668,12 @@ function _looksLikeMoneyFingerprintFromKnownBankApp(fullTextLower: string): bool
     'واردة',
     'وارد',
     'صادرة',
+    'شحن',
+    'بقيمة',
+    'جاري',
+    'transaction',
+    'jawwal pay',
+    'جوال باي',
   ]);
 }
 
@@ -710,6 +775,8 @@ function _parseAndroidPaymentNotification(params: {
     (strong || bankOpHints || _looksLikeMoneyFingerprintFromKnownBankApp(fullTextLower))
   ) {
     // BOP friend payment tray text (تحويل دفع لصديق) — not "تحويل بنكي"
+  } else if (_isPalestineBankIncomingAccountLine(fullTextLower)) {
+    // Incoming to account/wallet (often different from outgoing / تحويل بنكي)
   } else {
     return null;
   }

@@ -208,6 +208,8 @@ function _detectSource(packageNameLower: string, titleLower: string, messageLowe
     'com.android.messaging',
     'com.miui.mms',
     'com.huawei.message',
+    'com.oneplus.mms',
+    'com.coloros.mms',
   ]);
 
   // Check for Iburaq transfer via SMS
@@ -389,16 +391,22 @@ function _isLikelyNonPaymentJunk(input: string): boolean {
 function _isKnownPaymentAppPackage(packageLower: string): boolean {
   return _containsAny(packageLower, [
     'palpay',
+    'com.palpay',
+    'net.palpay',
+    'ps.palpay',
     'jawwal',
     'jawwalpay',
+    'ps.jawwal',
+    'com.jawwal',
     'bankofpalestine',
     'bop',
     'com.bop',
-    'com.palpay',
-    'ps.jawwal',
+    'bop.mobile',
     'albop',
     'efinance',
     'palestinebank',
+    'cash.pal',
+    'wallet.ps',
   ]);
 }
 
@@ -483,6 +491,12 @@ function _hasStrongPaymentSignal(fullTextLower: string): boolean {
     'إشعار عملية',
     'اشعار عملية',
     'عملية مالية',
+    'تم بنجاح',
+    'بنجاح',
+    'تمت العملية',
+    'دفعة',
+    'إيداع',
+    'ايداع',
     'حسابك',
     'لحسابك',
     'بمبلغ',
@@ -541,6 +555,8 @@ function _inferSourceFallback(packageNameLower: string, messageLower: string): s
     'com.android.messaging',
     'com.miui.mms',
     'com.huawei.message',
+    'com.oneplus.mms',
+    'com.coloros.mms',
   ]);
   if (isSmsApp && _containsAny(messageLower, ['iburaq', 'ايبرق', 'البراق'])) return 'Iburaq';
   if (isSmsApp) return 'SMS Payment';
@@ -588,7 +604,13 @@ function _parseAndroidPaymentNotification(params: {
     fullTextLower.includes('بنك') ||
     fullTextLower.includes('bop') ||
     fullTextLower.includes('palestine') ||
-    fullTextLower.includes('فلسطين');
+    fullTextLower.includes('فلسطين') ||
+    fullTextLower.includes('jawwal') ||
+    fullTextLower.includes('palpay') ||
+    fullTextLower.includes('جوال') ||
+    fullTextLower.includes('بالباي') ||
+    fullTextLower.includes('بال باي') ||
+    fullTextLower.includes('ايبرق');
   const iburaq = _containsAny(haystack, ['iburaq', 'ايبرق', 'البراق']);
 
   if (knownPayment) {
@@ -643,7 +665,11 @@ export const capturePaymentNotificationFromAndroid = async (
 ): Promise<void> => {
   try {
     const { packageName, title, message, receivedAt, notificationKey: notificationKeyRaw } = req.body ?? {};
-    if (!packageName || !title || !message) {
+    const pkg = String(packageName ?? '').trim();
+    const titleStr = String(title ?? '').trim();
+    const messageStr = String(message ?? '').trim();
+    // Banks/wallets often put all text in title OR body only — require package + at least one non-empty line.
+    if (!pkg || (!titleStr && !messageStr)) {
       res.status(200).json({ success: false, reason: 'Missing fields' });
       return;
     }
@@ -655,9 +681,9 @@ export const capturePaymentNotificationFromAndroid = async (
         : '';
 
     const parsed = _parseAndroidPaymentNotification({
-      packageName: String(packageName),
-      title: String(title),
-      message: String(message),
+      packageName: pkg,
+      title: titleStr,
+      message: messageStr,
       receivedAt: received,
     });
 

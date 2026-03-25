@@ -87,6 +87,11 @@ const _amountAfterMablagRegex = new RegExp(
   String.raw`مبلغ[\s:]*(\d{1,3}(?:[,\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)`,
   'i'
 );
+/** BOP / mobile banking: "بمبلغ 55.00 ILS" */
+const _amountAfterBimablagRegex = new RegExp(
+  String.raw`بمبلغ[\s:]*(\d{1,3}(?:[,\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)`,
+  'i'
+);
 const _transactionIdRegex = new RegExp(
   String.raw`(?:tx(?:n)?|transaction|ref|reference|رقم العملية|رقم المرجع)[\s:#-]*([A-Za-z0-9\-]{4,})`,
   'i'
@@ -297,6 +302,7 @@ function _isIncomingIndicators(input: string): boolean {
     'واردة',
     'للمحفظة',
     'إلى محفظتك',
+    'تحويل بنكي',
   ]);
 }
 
@@ -362,6 +368,14 @@ function _isFalsePositive(input: string): boolean {
 }
 
 /** Non-bank notifications that often contain digits (games, social, weather). */
+/** e.g. "موبايل: تحويل بنكي: … بمبلغ 55.00 ILS" — bank app may use OEM-specific package id. */
+function _isPalestineBankTransferLine(fullTextLower: string): boolean {
+  return (
+    fullTextLower.includes('تحويل بنكي') &&
+    (fullTextLower.includes('بمبلغ') || fullTextLower.includes('مبلغ'))
+  );
+}
+
 function _isLikelyNonPaymentJunk(input: string): boolean {
   const lower = input.toLowerCase();
   return _containsAny(lower, [
@@ -402,9 +416,12 @@ function _isKnownPaymentAppPackage(packageLower: string): boolean {
     'bop',
     'com.bop',
     'bop.mobile',
+    'bop.ps',
+    'ps.bop',
     'albop',
     'efinance',
     'palestinebank',
+    'palestine.bank',
     'cash.pal',
     'wallet.ps',
   ]);
@@ -619,6 +636,8 @@ function _parseAndroidPaymentNotification(params: {
     // Iburaq SMS rail
   } else if (smsPkg && bankKw && strong) {
     // Generic bank SMS
+  } else if (_isPalestineBankTransferLine(fullTextLower) && (strong || bankOpHints)) {
+    // BOP mobile template; package name may not match known substrings on some devices
   } else {
     return null;
   }
@@ -628,6 +647,10 @@ function _parseAndroidPaymentNotification(params: {
   let amountMatch = _amountRegex.exec(combinedNormalized) ?? _amountRegex.exec(messageNormalized);
   if (!amountMatch) {
     amountMatch = _amountAfterMablagRegex.exec(combinedNormalized) ?? _amountAfterMablagRegex.exec(messageNormalized);
+  }
+  if (!amountMatch) {
+    amountMatch =
+      _amountAfterBimablagRegex.exec(combinedNormalized) ?? _amountAfterBimablagRegex.exec(messageNormalized);
   }
   const amount = amountMatch ? _parseAmount(amountMatch[1]) : null;
   if (amount == null || amount <= 0) return null;

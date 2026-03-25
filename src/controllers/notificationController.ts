@@ -553,6 +553,51 @@ function _hasBankOperationHints(fullTextLower: string): boolean {
   ]);
 }
 
+/** Digits + money/bank cue — aligns with Android [looksLikeMoneyFingerprintFromKnownBankApp]. */
+function _looksLikeMoneyFingerprintFromKnownBankApp(fullTextLower: string): boolean {
+  if (!/\d/.test(fullTextLower)) return false;
+  return _containsAny(fullTextLower, [
+    'مبلغ',
+    'بمبلغ',
+    'رصيد',
+    'حساب',
+    'حوالة',
+    'عملية',
+    'شيكل',
+    'شيقل',
+    'نيس',
+    '₪',
+    'ils',
+    'nis',
+    'jod',
+    'usd',
+    'eur',
+    'gbp',
+    'transfer',
+    'payment',
+    'deposit',
+    'credit',
+    'debit',
+    'amount',
+    'balance',
+    'بنك',
+    'bank',
+    'bop',
+    'palestine',
+    'فلسطين',
+    'تحويل بنكي',
+    'إشعار',
+    'اشعار',
+    'إيداع',
+    'ايداع',
+    'استلام',
+    'استقبال',
+    'واردة',
+    'وارد',
+    'صادرة',
+  ]);
+}
+
 function _isExcludedPackage(packageNameLower: string): boolean {
   return _containsAny(packageNameLower, [
     'com.whatsapp',
@@ -639,10 +684,10 @@ function _parseAndroidPaymentNotification(params: {
   const iburaq = _containsAny(haystack, ['iburaq', 'ايبرق', 'البراق']);
 
   if (knownPayment) {
-    if (!strong && !bankOpHints) return null;
+    if (!strong && !bankOpHints && !_looksLikeMoneyFingerprintFromKnownBankApp(fullTextLower)) return null;
   } else if (smsPkg && iburaq && strong) {
     // Iburaq SMS rail
-  } else if (smsPkg && bankKw && strong) {
+  } else if (smsPkg && bankKw && (strong || _looksLikeMoneyFingerprintFromKnownBankApp(fullTextLower))) {
     // Generic bank SMS
   } else if (_isPalestineBankTransferLine(fullTextLower) && (strong || bankOpHints)) {
     // BOP mobile template; package name may not match known substrings on some devices

@@ -16,10 +16,10 @@ export const createPaymentNotification = async (
       next(new BadRequestError('source, title and message are required'));
       return;
     }
-    const parsedAmount = Number(amount);
-    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
-      next(new BadRequestError('Valid payment amount is required'));
-      return;
+    let parsedAmount: number | null = null;
+    if (amount !== undefined && amount !== null && amount !== '') {
+      const n = Number(amount);
+      if (Number.isFinite(n) && n > 0) parsedAmount = n;
     }
 
     const received = receivedAt ? new Date(receivedAt) : new Date();
@@ -44,6 +44,7 @@ export const createPaymentNotification = async (
       message: String(message),
       amount: parsedAmount,
       transactionId: txId || undefined,
+      receivedAt: received,
     });
     const existingByContent = await PaymentNotification.findOne({
       userId: req.userId,
@@ -65,7 +66,7 @@ export const createPaymentNotification = async (
       title,
       message,
       direction: dir,
-      amount: parsedAmount,
+      ...(parsedAmount != null ? { amount: parsedAmount } : {}),
       currency,
       transactionId: txId ? txId : undefined,
       contentHash,
@@ -130,14 +131,21 @@ function _computePaymentContentHash(params: {
   userId: string;
   source: string;
   message: string;
-  amount: number;
+  amount: number | null | undefined;
   transactionId?: string;
+  /** Disambiguates two identical-looking transfers in the same minute (Issue 3). */
+  receivedAt: Date;
 }): string {
   const tx = (params.transactionId || '').trim().toLowerCase();
   if (tx) return `tx:${tx}`;
   const norm = _normalizeForFingerprint(params.message);
+  const minuteBucket = Math.floor(params.receivedAt.getTime() / 60000);
+  const amt =
+    params.amount != null && Number.isFinite(params.amount) && params.amount > 0
+      ? String(params.amount)
+      : 'na';
   return createHash('sha256')
-    .update(`${params.userId}|${params.source}|${norm}|${params.amount}`, 'utf8')
+    .update(`${params.userId}|${params.source}|${norm}|${amt}|${minuteBucket}`, 'utf8')
     .digest('hex');
 }
 
@@ -589,14 +597,14 @@ function _parseAndroidPaymentNotification(params: {
   source: string;
   title: string;
   message: string;
-  amount: number;
+  amount: number | null;
   currency?: string;
   transactionId?: string;
   direction: 'incoming' | 'outgoing' | 'unknown';
 } | null {
   const packageLower = (params.packageName || '').toLowerCase();
-  const titleLower = (params.title || '').toLowerCase();
   const messageNormalized = _normalizeDigits(params.message || '');
+  const titleLower = _normalizeDigits(params.title || '').toLowerCase();
   const messageLower = messageNormalized.toLowerCase();
   const haystack = `${packageLower} ${titleLower} ${messageLower}`;
   const combinedNormalized = _normalizeDigits(`${params.title || ''}\n${params.message || ''}`);
@@ -652,15 +660,16 @@ function _parseAndroidPaymentNotification(params: {
     amountMatch =
       _amountAfterBimablagRegex.exec(combinedNormalized) ?? _amountAfterBimablagRegex.exec(messageNormalized);
   }
-  const amount = amountMatch ? _parseAmount(amountMatch[1]) : null;
-  if (amount == null || amount <= 0) return null;
+  const parsedAmt = amountMatch ? _parseAmount(amountMatch[1]) : null;
+  const resolvedAmount =
+    parsedAmt != null && Number.isFinite(parsedAmt) && parsedAmt > 0 ? parsedAmt : null;
 
   const source =
     _detectSource(packageLower, titleLower, messageLower, haystack) ||
     _inferSourceFallback(packageLower, messageLower);
 
   let currency: string | undefined;
-  if (amountMatch && amountMatch[2]) {
+  if (resolvedAmount != null && amountMatch && amountMatch[2]) {
     const c = amountMatch[2].toUpperCase();
     if (c === '$' || c === 'US$') currency = 'USD';
     else if (c === 'JDS') currency = 'JOD';
@@ -674,7 +683,7 @@ function _parseAndroidPaymentNotification(params: {
     source,
     title: params.title,
     message: messageNormalized,
-    amount,
+    amount: resolvedAmount,
     currency,
     transactionId: transactionId || undefined,
     direction,
@@ -748,6 +757,7 @@ export const capturePaymentNotificationFromAndroid = async (
       message: parsed.message,
       amount: parsed.amount,
       transactionId: txId || undefined,
+      receivedAt: received,
     });
     const existingByContent = await PaymentNotification.findOne({
       userId: req.userId,
@@ -764,7 +774,7 @@ export const capturePaymentNotificationFromAndroid = async (
       title: parsed.title,
       message: parsed.message,
       direction: parsed.direction,
-      amount: parsed.amount,
+      ...(parsed.amount != null ? { amount: parsed.amount } : {}),
       currency: parsed.currency,
       transactionId: txId || undefined,
       contentHash,

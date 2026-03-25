@@ -384,6 +384,20 @@ function _isPalestineBankTransferLine(fullTextLower: string): boolean {
   );
 }
 
+/** BOP "Pay to friend" / تحويل دفع — wording omits "تحويل بنكي" (see tray template). */
+function _isPalestineBankFriendPaymentLine(fullTextLower: string): boolean {
+  const t = fullTextLower;
+  const friend =
+    t.includes('تحويل دفع') || t.includes('الدفع لصديق') || t.includes('دفع لصديق');
+  const money =
+    t.includes('بمبلغ') ||
+    t.includes('مبلغ') ||
+    t.includes('ils') ||
+    t.includes('nis') ||
+    t.includes('₪');
+  return friend && money;
+}
+
 function _isLikelyNonPaymentJunk(input: string): boolean {
   const lower = input.toLowerCase();
   return _containsAny(lower, [
@@ -691,6 +705,11 @@ function _parseAndroidPaymentNotification(params: {
     // Generic bank SMS
   } else if (_isPalestineBankTransferLine(fullTextLower) && (strong || bankOpHints)) {
     // BOP mobile template; package name may not match known substrings on some devices
+  } else if (
+    _isPalestineBankFriendPaymentLine(fullTextLower) &&
+    (strong || bankOpHints || _looksLikeMoneyFingerprintFromKnownBankApp(fullTextLower))
+  ) {
+    // BOP friend payment tray text (تحويل دفع لصديق) — not "تحويل بنكي"
   } else {
     return null;
   }

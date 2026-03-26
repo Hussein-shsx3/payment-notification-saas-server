@@ -16,6 +16,7 @@ export const createPaymentNotification = async (
       next(new BadRequestError('source, title and message are required'));
       return;
     }
+    const messageStored = _stripTrailingAvailableBalanceLine(_normalizeDigits(String(message)));
     let parsedAmount: number | null = null;
     if (amount !== undefined && amount !== null && amount !== '') {
       const n = Number(amount);
@@ -41,7 +42,7 @@ export const createPaymentNotification = async (
     const contentHash = _computePaymentContentHash({
       userId: String(req.userId),
       source: String(source),
-      message: String(message),
+      message: messageStored,
       amount: parsedAmount,
       transactionId: txId || undefined,
       receivedAt: received,
@@ -64,7 +65,7 @@ export const createPaymentNotification = async (
       userId: req.userId,
       source,
       title,
-      message,
+      message: messageStored,
       direction: dir,
       ...(parsedAmount != null ? { amount: parsedAmount } : {}),
       currency,
@@ -123,6 +124,23 @@ function _isInternalAccountTransferOnly(combinedLower: string): boolean {
 /** Card movement alerts (e.g. "حركة على بطاقة رقم … بقيمة") — not stored. */
 function _isCardMovementExcluded(combinedLower: string): boolean {
   return combinedLower.includes('حركة على بطاقة');
+}
+
+/** Remove trailing available-balance clause from SMS (keep transfer line only). */
+function _stripTrailingAvailableBalanceLine(input: string): string {
+  if (!input) return input;
+  let s = input.replace(/\r\n/g, '\n').trim();
+  s = s.replace(/[\s.،\n]+رصيد(?:كم|ك)\s+المتوفر(?:\s+هو)?\s*[\d.,\s]+$/u, '');
+  return s.replace(/[.،\s]+$/u, '').trim();
+}
+
+/** Casual chat / WhatsApp meta-messages wrongly classified as payments (e.g. Jawwal tray). */
+function _isCasualWhatsAppOrChatJunk(lower: string): boolean {
+  if (lower.includes('whatsapp') || lower.includes('واتس')) return true;
+  if (lower.includes('ع الواتس') || lower.includes('عالواتس')) return true;
+  if (lower.includes('بعتلك الاشعار') || lower.includes('بعتلك الإشعار')) return true;
+  if (lower.includes('بعتلك') && (lower.includes('اشعار') || lower.includes('إشعار'))) return true;
+  return false;
 }
 
 function _normalizeForFingerprint(message: string): string {
@@ -533,6 +551,7 @@ function _isSmsIburaqIncomingWireLine(fullTextLower: string): boolean {
 
 function _isLikelyNonPaymentJunk(input: string): boolean {
   const lower = input.toLowerCase();
+  if (_isCasualWhatsAppOrChatJunk(lower)) return true;
   return _containsAny(lower, [
     'steps',
     'calories',
@@ -837,11 +856,11 @@ function _parseAndroidPaymentNotification(params: {
   direction: 'incoming' | 'outgoing' | 'unknown';
 } | null {
   const packageLower = (params.packageName || '').toLowerCase();
-  const messageNormalized = _normalizeDigits(params.message || '');
+  const messageNormalized = _stripTrailingAvailableBalanceLine(_normalizeDigits(params.message || ''));
   const titleLower = _normalizeDigits(params.title || '').toLowerCase();
   const messageLower = messageNormalized.toLowerCase();
   const haystack = `${packageLower} ${titleLower} ${messageLower}`;
-  const combinedNormalized = _normalizeDigits(`${params.title || ''}\n${params.message || ''}`);
+  const combinedNormalized = _normalizeDigits(`${params.title || ''}\n${messageNormalized}`);
 
   if (_isExcludedPackage(packageLower)) return null;
   if (_isFalsePositive(haystack)) return null;

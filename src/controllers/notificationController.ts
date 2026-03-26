@@ -80,17 +80,19 @@ export const createPaymentNotification = async (
   }
 };
 
+/**
+ * Amount token: greedy integer (\d+) so "1200.00" is not split as "120" + "0.00".
+ * Thousands: 1,234.56 via \d{1,3}(?:[,\s]\d{3})+ optional chain before decimals.
+ */
+const _amountToken = String.raw`(?:(?:\d{1,3}(?:[,\s]\d{3})+|\d+)(?:[.,]\d{1,2})?)`;
 const _amountRegex = new RegExp(
-  String.raw`(?<!\d)(\d{1,3}(?:[,\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(USD|US\$|ILS|NIS|JOD|JDS|\$|₪|شيكل|شيقل|دولار)?`,
+  String.raw`(?<!\d)(${_amountToken})\s*(USD|US\$|ILS|NIS|JOD|JDS|\$|₪|شيكل|شيقل|دولار)?`,
   'i'
 );
-const _amountAfterMablagRegex = new RegExp(
-  String.raw`مبلغ[\s:]*(\d{1,3}(?:[,\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)`,
-  'i'
-);
-/** BOP / mobile banking: "بمبلغ 55.00 ILS" */
+const _amountAfterMablagRegex = new RegExp(String.raw`مبلغ[\s:]*(${_amountToken})`, 'i');
+/** BOP / mobile banking: "بمبلغ 55.00 ILS" — try before global _amountRegex (avoids 120 vs 1200). */
 const _amountAfterBimablagRegex = new RegExp(
-  String.raw`بمبلغ[\s:]*(\d{1,3}(?:[,\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)`,
+  String.raw`بمبلغ[\s:]*(${_amountToken})\s*(USD|US\$|ILS|NIS|JOD|JDS|\$|₪|شيكل|شيقل|دولار)?`,
   'i'
 );
 const _transactionIdRegex = new RegExp(
@@ -838,13 +840,13 @@ function _parseAndroidPaymentNotification(params: {
 
   const direction = _inferPaymentDirection(fullText);
 
-  let amountMatch = _amountRegex.exec(combinedNormalized) ?? _amountRegex.exec(messageNormalized);
+  let amountMatch =
+    _amountAfterBimablagRegex.exec(combinedNormalized) ?? _amountAfterBimablagRegex.exec(messageNormalized);
   if (!amountMatch) {
     amountMatch = _amountAfterMablagRegex.exec(combinedNormalized) ?? _amountAfterMablagRegex.exec(messageNormalized);
   }
   if (!amountMatch) {
-    amountMatch =
-      _amountAfterBimablagRegex.exec(combinedNormalized) ?? _amountAfterBimablagRegex.exec(messageNormalized);
+    amountMatch = _amountRegex.exec(combinedNormalized) ?? _amountRegex.exec(messageNormalized);
   }
   const parsedAmt = amountMatch ? _parseAmount(amountMatch[1]) : null;
   const resolvedAmount =

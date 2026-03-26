@@ -934,16 +934,9 @@ export const capturePaymentNotificationFromAndroid = async (
       return;
     }
 
-    if (notificationKey) {
-      const existingByKey = await PaymentNotification.findOne({
-        userId: req.userId,
-        notificationKey,
-      }).lean();
-      if (existingByKey) {
-        res.status(201).json({ success: true, data: existingByKey });
-        return;
-      }
-    }
+    // Do NOT dedupe by notificationKey alone: Samsung Messaging (and similar) reuse the same
+    // StatusBarNotification key for the same thread when a new SMS updates the tray — returning
+    // the first doc with that key would show the wrong payment (e.g. old wallet top-up vs new wire).
 
     const txId = parsed.transactionId ? String(parsed.transactionId).trim().toLowerCase() : '';
 

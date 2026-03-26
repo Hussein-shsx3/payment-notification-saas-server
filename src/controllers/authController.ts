@@ -167,22 +167,33 @@ export const login = async (req: Request, res: Response, next: NextFunction): Pr
   }
 };
 
-/** Read-only session: same email as main account, separate viewer password set from Settings. */
+/** Read-only session: same account as main (email or phone), viewer password from Settings. */
 export const loginViewer = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const email = String(req.body.email ?? '').trim().toLowerCase();
+    const identifier = String(req.body.emailOrPhone ?? req.body.email ?? '').trim();
     const { password } = req.body;
 
-    if (!email || !email.includes('@')) {
-      next(new BadRequestError('Email and viewer password are required'));
-      return;
-    }
-    if (!password) {
-      next(new BadRequestError('Email and viewer password are required'));
+    if (!identifier || !password) {
+      next(new BadRequestError('Email or phone and viewer password are required'));
       return;
     }
 
-    const user = await User.findOne({ email }).select('+viewerPasswordHash +emailVerified +refreshToken');
+    const query: Record<string, unknown> = identifier.includes('@')
+      ? { email: identifier.toLowerCase() }
+      : {
+          $or: [
+            { phoneNumber: identifier },
+            ...((): Array<{ phoneNumber: string }> => {
+              const digits = identifier.replace(/\D/g, '');
+              if (digits.length >= 6 && digits !== identifier) {
+                return [{ phoneNumber: digits }];
+              }
+              return [];
+            })(),
+          ],
+        };
+
+    const user = await User.findOne(query).select('+viewerPasswordHash +emailVerified +refreshToken');
 
     if (!user) {
       next(new UnauthorizedError('Invalid credentials'));

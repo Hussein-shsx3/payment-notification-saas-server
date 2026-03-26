@@ -126,11 +126,20 @@ function _isCardMovementExcluded(combinedLower: string): boolean {
   return combinedLower.includes('حركة على بطاقة');
 }
 
-/** Remove trailing available-balance clause from SMS (keep transfer line only). */
+/** Remove available-balance clause from SMS (keep transfer line only). Not anchored to EOF — OEMs append \\n + ⁨BOP⁩ after the amount. */
 function _stripTrailingAvailableBalanceLine(input: string): string {
   if (!input) return input;
   let s = input.replace(/\r\n/g, '\n').trim();
-  s = s.replace(/[\s.،\n]+رصيد(?:كم|ك)\s+المتوفر(?:\s+هو)?\s*[\d.,\s]+$/u, '');
+  s = s.replace(/[\s.،\n]*رصيد(?:كم|ك)\s+المتوفر(?:\s+هو)?\s*[\d.,]+/gu, '');
+  const lines = s
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => {
+      if (line.length === 0) return false;
+      const noMarks = line.replace(/[\u200c-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, '').trim();
+      return !/^BOP$/i.test(noMarks);
+    });
+  s = lines.join('\n').trim();
   return s.replace(/[.،\s]+$/u, '').trim();
 }
 

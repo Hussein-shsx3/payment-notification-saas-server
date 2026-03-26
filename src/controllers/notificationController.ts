@@ -388,7 +388,9 @@ function _isSentPayment(input: string): boolean {
 }
 
 function _isFalsePositive(input: string): boolean {
-  return _containsAny(input, [
+  const lower = input.toLowerCase();
+  if (_isOtpOrStepUpVerificationMessage(lower)) return true;
+  return _containsAny(lower, [
     'otp',
     'one-time password',
     'verification code',
@@ -401,11 +403,39 @@ function _isFalsePositive(input: string): boolean {
     'رمز التحقق',
     'رمز التأكيد',
     'code:',
+    'code :',
     'two-factor',
     'authenticator',
     'signed in from',
     'new device',
+    'كلمة السر المؤقتة',
+    'كلمه السر المؤقتة',
+    'السر المؤقتة',
+    'يرجى استخدام كلمة السر',
+    'استخدم كلمة السر',
+    'temporary password',
+    'temp password',
+    'one time password',
   ]);
+}
+
+/** Bank step-up SMS — e.g. temporary password to complete transaction; not a payment alert. */
+function _isOtpOrStepUpVerificationMessage(lower: string): boolean {
+  if (lower.includes('كلمة السر المؤقتة') || lower.includes('كلمه السر المؤقتة')) return true;
+  if (lower.includes('يرجى استخدام كلمة السر') || lower.includes('استخدم كلمة السر المؤقتة')) return true;
+  if (
+    lower.includes('لاستكمال الحركة') &&
+    (lower.includes('مؤقت') || lower.includes('code') || lower.includes('رمز'))
+  ) {
+    return true;
+  }
+  if (
+    /code\s*:\s*\d/i.test(lower) &&
+    (lower.includes('مؤقت') || lower.includes('استكمال') || lower.includes('يرجى'))
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /** Non-bank notifications that often contain digits (games, social, weather). */

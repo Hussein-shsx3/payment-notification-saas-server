@@ -53,12 +53,22 @@ app.use('/api', routes);
 app.use(notFound);
 app.use(errorHandler);
 
-const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
+/** Render free tier idles ~15m after no *external* HTTP; ping a bit under that. Only runs while the process is awake — set KEEP_ALIVE_URL on Render + use UptimeRobot/cron-job.org as backup. */
+const KEEP_ALIVE_INTERVAL_MS = 10 * 60 * 1000;
 const keepAliveUrl = config.keepAlive.url || `http://127.0.0.1:${config.port}/health`;
+const keepAliveIsPublic =
+  /^https?:\/\//i.test(keepAliveUrl) && !/^https?:\/\/(127\.0\.0\.1|localhost)/i.test(keepAliveUrl);
+if (config.env === 'production' && !keepAliveIsPublic) {
+  console.warn(
+    '[keep-alive] KEEP_ALIVE_URL is not set to your public HTTPS URL on this host. In-process pings use localhost and do not stop Render from sleeping. Set KEEP_ALIVE_URL=https://<your-app>.onrender.com/health in Render env, and/or use an external ping (UptimeRobot, cron-job.org) every 5–10 min.'
+  );
+} else {
+  console.log(`[keep-alive] GET ${keepAliveUrl} every ${KEEP_ALIVE_INTERVAL_MS / 60000} min`);
+}
 setInterval(() => {
   void fetch(keepAliveUrl).catch((err) => {
     console.error('Keep-alive ping failed:', err);
   });
-}, FIFTEEN_MINUTES_MS);
+}, KEEP_ALIVE_INTERVAL_MS);
 
 export default app;

@@ -149,9 +149,36 @@ function _computePaymentContentHash(params: {
     .digest('hex');
 }
 
+/**
+ * Shop use-case: flag real money-in (حوالة واردة / Iburaq) vs pay-to-friend, transfers out, wallet top-up, card spend.
+ * Order matters: explicit phrases first, then legacy keyword lists.
+ */
 function _inferPaymentDirection(fullTextLower: string): 'incoming' | 'outgoing' | 'unknown' {
-  const sent = _isSentPayment(fullTextLower);
-  const inc = _isIncomingIndicators(fullTextLower);
+  const t = fullTextLower;
+  if (
+    t.includes('حوالة واردة') ||
+    t.includes('واردة لحسابك') ||
+    (t.includes('واردة') && t.includes('لحسابك'))
+  ) {
+    return 'incoming';
+  }
+  if (
+    t.includes('حوالة صادرة') ||
+    t.includes('صادرة من حسابك') ||
+    t.includes('تحويل دفع لصديق') ||
+    (t.includes('الدفع لصديق') && t.includes('بمبلغ')) ||
+    t.includes('موبايل: تحويل بنكي:') ||
+    t.includes('transfer to beneficiary') ||
+    t.includes('شحن محفظة') ||
+    (t.includes('شحن') && t.includes('محفظة')) ||
+    t.includes('تم إعادة شحن رصيدك') ||
+    t.includes('تم إعادة شحن') ||
+    (t.includes('شراء') && (t.includes('بمبلغ') || t.includes('ils')))
+  ) {
+    return 'outgoing';
+  }
+  const sent = _isSentPayment(t);
+  const inc = _isIncomingIndicators(t);
   if (sent && inc) return 'unknown';
   if (sent) return 'outgoing';
   if (inc) return 'incoming';
@@ -303,18 +330,12 @@ function _isIncomingIndicators(input: string): boolean {
     'تم إضافة',
     'إشعار إيداع',
     'اشعار ايداع',
-    '- wallet',
-    'wallet',
-    'محفظة',
     'وارد',
     'واردة',
-    'للمحفظة',
-    'إلى محفظتك',
     'has been accepted',
     'has been credited',
     'accepted with',
     'money transfer',
-    'شحن',
   ]);
 }
 
@@ -355,6 +376,12 @@ function _isSentPayment(input: string): boolean {
     'تم سحب',
     'سحب',
     'شراء',
+    'تحويل دفع لصديق',
+    'شحن محفظة',
+    'موبايل: تحويل بنكي:',
+    'تم إعادة شحن رصيدك',
+    'تم إعادة شحن',
+    'transfer to beneficiary',
   ]);
 }
 
@@ -410,7 +437,6 @@ function _isPalestineBankIncomingAccountLine(fullTextLower: string): boolean {
   const t = fullTextLower;
   if (!/\d/.test(t)) return false;
   const incomingCue =
-    t.includes('شحن') ||
     t.includes('حوالة واردة') ||
     t.includes('واردة لحسابك') ||
     t.includes('واردة إلى حسابك') ||

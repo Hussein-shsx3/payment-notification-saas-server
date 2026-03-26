@@ -571,6 +571,7 @@ function _isSmsAppPackage(packageLower: string): boolean {
   if (packageLower.includes('messaging')) return true;
   if (packageLower.includes('mms')) return true;
   if (packageLower.includes('sms') && packageLower.includes('android')) return true;
+  if (packageLower.includes('telephony')) return true;
   return false;
 }
 
@@ -737,7 +738,31 @@ function _looksLikeMoneyFingerprintFromKnownBankApp(fullTextLower: string): bool
     'transaction',
     'jawwal pay',
     'جوال باي',
+    'iburaq',
+    'البراق',
+    'ايبرق',
   ]);
+}
+
+function _bankKeywordsMatch(fullTextLower: string): boolean {
+  return (
+    fullTextLower.includes('bank') ||
+    fullTextLower.includes('بنك') ||
+    fullTextLower.includes('bop') ||
+    fullTextLower.includes('palestine') ||
+    fullTextLower.includes('فلسطين') ||
+    fullTextLower.includes('jawwal') ||
+    fullTextLower.includes('palpay') ||
+    fullTextLower.includes('جوال') ||
+    fullTextLower.includes('بالباي') ||
+    fullTextLower.includes('بال باي') ||
+    fullTextLower.includes('ايبرق') ||
+    fullTextLower.includes('البراق') ||
+    fullTextLower.includes('iburaq') ||
+    fullTextLower.includes('بنك فلسطين') ||
+    fullTextLower.includes('pal pay') ||
+    fullTextLower.includes('محفظة')
+  );
 }
 
 function _isExcludedPackage(packageNameLower: string): boolean {
@@ -803,28 +828,19 @@ function _parseAndroidPaymentNotification(params: {
   const smsPkg = _isSmsAppPackage(packageLower);
   const strong = _hasStrongPaymentSignal(fullTextLower);
   const bankOpHints = _hasBankOperationHints(fullTextLower);
-  const bankKw =
-    fullTextLower.includes('bank') ||
-    fullTextLower.includes('بنك') ||
-    fullTextLower.includes('bop') ||
-    fullTextLower.includes('palestine') ||
-    fullTextLower.includes('فلسطين') ||
-    fullTextLower.includes('jawwal') ||
-    fullTextLower.includes('palpay') ||
-    fullTextLower.includes('جوال') ||
-    fullTextLower.includes('بالباي') ||
-    fullTextLower.includes('بال باي') ||
-    fullTextLower.includes('ايبرق');
+  const bankKw = _bankKeywordsMatch(fullTextLower);
   const iburaq = _containsAny(haystack, ['iburaq', 'ايبرق', 'البراق']);
 
   if (knownPayment) {
     if (!strong && !bankOpHints && !_looksLikeMoneyFingerprintFromKnownBankApp(fullTextLower)) return null;
   } else if (smsPkg && iburaq && strong) {
     // Iburaq SMS rail
-  } else if (smsPkg && bankKw && (strong || _looksLikeMoneyFingerprintFromKnownBankApp(fullTextLower))) {
-    // Generic bank SMS
   } else if (smsPkg && _isSmsIburaqIncomingWireLine(fullTextLower)) {
     // Iburaq SMS tray: حوالة واردة … بمبلغ … شيكل — often no "bank"/"jawwal" in body
+  } else if (smsPkg && /\d/.test(fullTextLower) && strong) {
+    // SMS: digits + strong payment phrase (sender may be only in title / OEM quirks)
+  } else if (smsPkg && bankKw && (strong || _looksLikeMoneyFingerprintFromKnownBankApp(fullTextLower))) {
+    // Generic bank SMS
   } else if (_isPalestineBankTransferLine(fullTextLower) && (strong || bankOpHints)) {
     // BOP mobile template; package name may not match known substrings on some devices
   } else if (

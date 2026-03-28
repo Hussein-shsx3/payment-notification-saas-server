@@ -1,17 +1,17 @@
 import crypto from 'crypto';
-import jwt from 'jsonwebtoken';
+import jwt, { type SignOptions } from 'jsonwebtoken';
 import { config } from '../config';
 import { AccessMode, JwtPayload } from '../types';
 
-// Use seconds for compatibility with @types/jsonwebtoken (1d = 86400, 30d = 2592000)
-const accessExpiresInSeconds = 86400;
-const refreshExpiresInSeconds = 2592000;
+const accessExpires = config.jwt.accessExpiresIn as SignOptions['expiresIn'];
+const refreshExpires = config.jwt.refreshExpiresIn as SignOptions['expiresIn'];
 
+/** Uses JWT_ACCESS_EXPIRES_IN / JWT_REFRESH_EXPIRES_IN from env (defaults in config). */
 export const generateAccessToken = (userId: string, accessMode: AccessMode = 'full'): string => {
   return jwt.sign(
     { userId, type: 'access', accessMode } as JwtPayload,
     config.jwt.accessSecret,
-    { expiresIn: accessExpiresInSeconds }
+    { expiresIn: accessExpires }
   );
 };
 
@@ -19,7 +19,7 @@ export const generateRefreshToken = (userId: string, accessMode: AccessMode = 'f
   return jwt.sign(
     { userId, type: 'refresh', accessMode } as JwtPayload,
     config.jwt.refreshSecret,
-    { expiresIn: refreshExpiresInSeconds }
+    { expiresIn: refreshExpires }
   );
 };
 
@@ -27,7 +27,7 @@ export const generateAdminToken = (adminId: string): string => {
   return jwt.sign(
     { userId: adminId, type: 'admin' } as JwtPayload,
     config.jwt.accessSecret,
-    { expiresIn: accessExpiresInSeconds }
+    { expiresIn: accessExpires }
   );
 };
 

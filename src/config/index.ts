@@ -23,7 +23,8 @@ export const config = {
   jwt: {
     accessSecret: required('JWT_ACCESS_SECRET'),
     refreshSecret: required('JWT_REFRESH_SECRET'),
-    accessExpiresIn: optional('JWT_ACCESS_EXPIRES_IN', '1d'),
+    /** Access + refresh both default to 30d so users re-enter password about once per month (tune via env). */
+    accessExpiresIn: optional('JWT_ACCESS_EXPIRES_IN', '30d'),
     refreshExpiresIn: optional('JWT_REFRESH_EXPIRES_IN', '30d'),
   },
 

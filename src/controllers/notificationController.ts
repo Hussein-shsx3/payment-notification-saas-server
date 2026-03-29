@@ -823,6 +823,51 @@ function _bankKeywordsMatch(fullTextLower: string): boolean {
   );
 }
 
+/** Title + body must name a real bank/wallet (SMS-only gate; aligns with Android PaymentNotifyFilters). */
+function _smsHasRecognizedPaymentBrand(fullTextLower: string): boolean {
+  return _containsAny(fullTextLower, [
+    'bop',
+    'bank of palestine',
+    'بنك فلسطين',
+    'palestine bank',
+    'bankofpalestine',
+    'jawwal',
+    'jawwal pay',
+    'palpay',
+    'pal pay',
+    'بالباي',
+    'بال باي',
+    'جوال باي',
+    'paypal',
+    'pay pal',
+    'iburaq',
+    'البراق',
+    'ايبرق',
+    'stripe',
+    'wise',
+    'transferwise',
+    'western union',
+    'moneygram',
+    'arab bank',
+    'البنك العربي',
+    'cairo amman',
+    'القاهرة عمان',
+    'qnb',
+    'fab',
+    'zain cash',
+    'orange money',
+    'cliq',
+    'تحويل بنكي',
+    'تحويل دفع',
+    'الدفع لصديق',
+    'دفع لصديق',
+    'مصرف فلسطين',
+    'efinance',
+    'cash.pal',
+    'wallet.ps',
+  ]);
+}
+
 function _isExcludedPackage(packageNameLower: string): boolean {
   return _containsAny(packageNameLower, [
     'com.whatsapp',
@@ -884,6 +929,9 @@ function _parseAndroidPaymentNotification(params: {
 
   const knownPayment = _isKnownPaymentAppPackage(packageLower);
   const smsPkg = _isSmsAppPackage(packageLower);
+  if (smsPkg && !knownPayment && !_smsHasRecognizedPaymentBrand(fullTextLower)) {
+    return null;
+  }
   const strong = _hasStrongPaymentSignal(fullTextLower);
   const bankOpHints = _hasBankOperationHints(fullTextLower);
   const bankKw = _bankKeywordsMatch(fullTextLower);

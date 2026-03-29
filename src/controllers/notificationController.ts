@@ -56,10 +56,14 @@ export const createPaymentNotification = async (
       return;
     }
 
-    const dir =
+    const titleLower = _normalizeDigits(String(title ?? '')).toLowerCase();
+    const messageLower = _normalizeDigits(String(messageStored ?? '')).toLowerCase();
+    const inferred = _inferPaymentDirection(`${titleLower} ${messageLower}`);
+    const clientDir =
       direction === 'outgoing' || direction === 'incoming' || direction === 'unknown'
         ? direction
         : 'unknown';
+    const dir = inferred !== 'unknown' ? inferred : clientDir;
 
     const doc = await PaymentNotification.create({
       userId: req.userId,
@@ -179,11 +183,26 @@ function _computePaymentContentHash(params: {
 }
 
 /**
+ * BOP mobile: "موبايل: تحويل بنكي: … بمبلغ …" + "Transfer To Beneficiary" — ambiguous in/out; treat as received (incoming).
+ * Not internal account moves (بين الحسابات).
+ */
+function _isTtbAmbiguousBeneficiaryTransfer(fullTextLower: string): boolean {
+  const t = fullTextLower;
+  if (!t.includes('موبايل: تحويل بنكي:')) return false;
+  if (t.includes('بين الحسابات')) return false;
+  return t.includes('transfer to beneficiary');
+}
+
+/**
  * Shop use-case: flag real money-in (حوالة واردة / Iburaq) vs pay-to-friend, transfers out, wallet top-up, card spend.
  * Order matters: explicit phrases first, then legacy keyword lists.
  */
 function _inferPaymentDirection(fullTextLower: string): 'incoming' | 'outgoing' | 'unknown' {
   const t = fullTextLower;
+  // Pay-to-friend is always money out (must run before generic "واردة" heuristics).
+  if (t.includes('تحويل دفع لصديق') || (t.includes('الدفع لصديق') && t.includes('بمبلغ'))) {
+    return 'outgoing';
+  }
   if (
     t.includes('حوالة واردة') ||
     t.includes('واردة لحسابك') ||
@@ -191,11 +210,12 @@ function _inferPaymentDirection(fullTextLower: string): 'incoming' | 'outgoing' 
   ) {
     return 'incoming';
   }
+  if (_isTtbAmbiguousBeneficiaryTransfer(t)) {
+    return 'incoming';
+  }
   if (
     t.includes('حوالة صادرة') ||
     t.includes('صادرة من حسابك') ||
-    t.includes('تحويل دفع لصديق') ||
-    (t.includes('الدفع لصديق') && t.includes('بمبلغ')) ||
     t.includes('موبايل: تحويل بنكي:') ||
     t.includes('transfer to beneficiary') ||
     t.includes('شحن محفظة') ||
@@ -1099,14 +1119,16 @@ export const getPaymentStats = async (
 ): Promise<void> => {
   try {
     const userId = new mongoose.Types.ObjectId(req.userId);
+    const viewerIncoming = req.accessMode === 'viewer';
+    const directionMatch = viewerIncoming ? { direction: 'incoming' as const } : {};
     const now = new Date();
     const thirtyDaysAgo = new Date(now);
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
     const [lastPayment, agg, daily] = await Promise.all([
-      PaymentNotification.findOne({ userId: req.userId }).sort({ receivedAt: -1 }).lean(),
+      PaymentNotification.findOne({ userId: req.userId, ...directionMatch }).sort({ receivedAt: -1 }).lean(),
       PaymentNotification.aggregate([
-        { $match: { userId } },
+        { $match: { userId, ...directionMatch } },
         {
           $group: {
             _id: null,
@@ -1122,6 +1144,7 @@ export const getPaymentStats = async (
         {
           $match: {
             userId,
+            ...directionMatch,
             receivedAt: { $gte: thirtyDaysAgo },
           },
         },
@@ -1177,6 +1200,9 @@ export const getPaymentNotifications = async (
     const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit), 10) || 20));
     const skip = (page - 1) * limit;
     const filter: Record<string, unknown> = { userId: req.userId };
+    if (req.accessMode === 'viewer') {
+      filter.direction = 'incoming';
+    }
 
     const fromStr = String(req.query.from || '').trim();
     const toStr = String(req.query.to || '').trim();

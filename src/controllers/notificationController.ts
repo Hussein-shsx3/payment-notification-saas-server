@@ -11,12 +11,17 @@ export const createPaymentNotification = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { source, title, message, receivedAt, amount, currency, transactionId, direction } = req.body;
+    const { source, title, message, receivedAt, amount, currency, transactionId } = req.body;
     if (!source || !title || !message) {
       next(new BadRequestError('source, title and message are required'));
       return;
     }
     const messageStored = _stripTrailingAvailableBalanceLine(_normalizeDigits(String(message)));
+    const combinedForCard = _normalizeDigits(`${String(title ?? '')}\n${messageStored}`).toLowerCase();
+    if (_isCardMovementExcluded(combinedForCard)) {
+      res.status(200).json({ success: false, reason: 'Card movement excluded' });
+      return;
+    }
     let parsedAmount: number | null = null;
     if (amount !== undefined && amount !== null && amount !== '') {
       const n = Number(amount);
@@ -59,11 +64,7 @@ export const createPaymentNotification = async (
     const titleLower = _normalizeDigits(String(title ?? '')).toLowerCase();
     const messageLower = _normalizeDigits(String(messageStored ?? '')).toLowerCase();
     const inferred = _inferPaymentDirection(`${titleLower} ${messageLower}`);
-    const clientDir =
-      direction === 'outgoing' || direction === 'incoming' || direction === 'unknown'
-        ? direction
-        : 'unknown';
-    const dir = inferred !== 'unknown' ? inferred : clientDir;
+    const dir = inferred;
 
     const doc = await PaymentNotification.create({
       userId: req.userId,
@@ -194,14 +195,16 @@ function _isTtbAmbiguousBeneficiaryTransfer(fullTextLower: string): boolean {
 }
 
 /**
- * Shop use-case: flag real money-in (حوالة واردة / Iburaq) vs pay-to-friend, transfers out, wallet top-up, card spend.
- * Order matters: explicit phrases first, then legacy keyword lists.
+ * Shop use-case: money-in vs transfers out, wallet top-up, card spend.
+ * Pay-to-friend (تحويل دفع لصديق) uses the same text for sender and receiver — treat as received (incoming).
+ * When direction cannot be inferred reliably, default to incoming (received).
  */
-function _inferPaymentDirection(fullTextLower: string): 'incoming' | 'outgoing' | 'unknown' {
+/** Defaults to incoming when direction is unclear (never returns unknown). */
+function _inferPaymentDirection(fullTextLower: string): 'incoming' | 'outgoing' {
   const t = fullTextLower;
-  // Pay-to-friend is always money out (must run before generic "واردة" heuristics).
+  // Same tray text for send and receive — store as received.
   if (t.includes('تحويل دفع لصديق') || (t.includes('الدفع لصديق') && t.includes('بمبلغ'))) {
-    return 'outgoing';
+    return 'incoming';
   }
   if (
     t.includes('حوالة واردة') ||
@@ -228,10 +231,10 @@ function _inferPaymentDirection(fullTextLower: string): 'incoming' | 'outgoing' 
   }
   const sent = _isSentPayment(t);
   const inc = _isIncomingIndicators(t);
-  if (sent && inc) return 'unknown';
+  if (sent && inc) return 'incoming';
   if (sent) return 'outgoing';
   if (inc) return 'incoming';
-  return 'unknown';
+  return 'incoming';
 }
 
 function _normalizeDigits(input: string): string {
@@ -425,7 +428,6 @@ function _isSentPayment(input: string): boolean {
     'تم سحب',
     'سحب',
     'شراء',
-    'تحويل دفع لصديق',
     'شحن محفظة',
     'موبايل: تحويل بنكي:',
     'تم إعادة شحن رصيدك',
@@ -927,7 +929,7 @@ function _parseAndroidPaymentNotification(params: {
   amount: number | null;
   currency?: string;
   transactionId?: string;
-  direction: 'incoming' | 'outgoing' | 'unknown';
+  direction: 'incoming' | 'outgoing';
 } | null {
   const packageLower = (params.packageName || '').toLowerCase();
   const messageNormalized = _stripTrailingAvailableBalanceLine(_normalizeDigits(params.message || ''));

@@ -11,7 +11,7 @@ export const createPaymentNotification = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { source, title, message, receivedAt, amount, currency, transactionId, direction } = req.body;
+    const { source, title, message, receivedAt, amount, currency, transactionId } = req.body;
     if (!source || !title || !message) {
       next(new BadRequestError('source, title and message are required'));
       return;
@@ -61,14 +61,7 @@ export const createPaymentNotification = async (
       return;
     }
 
-    const titleLower = _normalizeDigits(String(title ?? '')).toLowerCase();
-    const messageLower = _normalizeDigits(String(messageStored ?? '')).toLowerCase();
-    const inferred = _inferPaymentDirection(`${titleLower} ${messageLower}`);
-    const clientDir =
-      direction === 'outgoing' || direction === 'incoming' || direction === 'unknown'
-        ? direction
-        : 'unknown';
-    const dir = inferred !== 'unknown' ? inferred : clientDir;
+    const dir = 'detected' as const;
 
     const doc = await PaymentNotification.create({
       userId: req.userId,
@@ -195,56 +188,6 @@ function _computePaymentContentHash(params: {
     .digest('hex');
 }
 
-/**
- * BOP mobile: "موبايل: تحويل بنكي: … بمبلغ …" + "Transfer To Beneficiary" — ambiguous in/out; treat as received (incoming).
- * Not internal account moves (بين الحسابات).
- */
-function _isTtbAmbiguousBeneficiaryTransfer(fullTextLower: string): boolean {
-  const t = fullTextLower;
-  if (!t.includes('موبايل: تحويل بنكي:')) return false;
-  if (t.includes('بين الحسابات')) return false;
-  return t.includes('transfer to beneficiary');
-}
-
-/**
- * Incoming vs outgoing when the text allows it. Same template for send/receive (friend, TTB) → unknown.
- */
-function _inferPaymentDirection(fullTextLower: string): 'incoming' | 'outgoing' | 'unknown' {
-  const t = fullTextLower;
-  if (t.includes('تحويل دفع لصديق') || (t.includes('الدفع لصديق') && t.includes('بمبلغ'))) {
-    return 'unknown';
-  }
-  if (
-    t.includes('حوالة واردة') ||
-    t.includes('واردة لحسابك') ||
-    (t.includes('واردة') && t.includes('لحسابك'))
-  ) {
-    return 'incoming';
-  }
-  if (_isTtbAmbiguousBeneficiaryTransfer(t)) {
-    return 'unknown';
-  }
-  if (
-    t.includes('حوالة صادرة') ||
-    t.includes('صادرة من حسابك') ||
-    t.includes('موبايل: تحويل بنكي:') ||
-    t.includes('transfer to beneficiary') ||
-    t.includes('شحن محفظة') ||
-    (t.includes('شحن') && t.includes('محفظة')) ||
-    t.includes('تم إعادة شحن رصيدك') ||
-    t.includes('تم إعادة شحن') ||
-    (t.includes('شراء') && (t.includes('بمبلغ') || t.includes('ils')))
-  ) {
-    return 'outgoing';
-  }
-  const sent = _isSentPayment(t);
-  const inc = _isIncomingIndicators(t);
-  if (sent && inc) return 'unknown';
-  if (sent) return 'outgoing';
-  if (inc) return 'incoming';
-  return 'unknown';
-}
-
 function _normalizeDigits(input: string): string {
   const arabicIndic = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
   const easternArabicIndic = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
@@ -351,97 +294,6 @@ function _detectSource(packageNameLower: string, titleLower: string, messageLowe
 
   if (isSmsApp && hasBankHint) return 'SMS Payment';
   return null;
-}
-
-/** Stronger cues for money-in (used with sent cues to disambiguate). */
-function _isIncomingIndicators(input: string): boolean {
-  return _containsAny(input, [
-    'received',
-    'credited',
-    'deposited',
-    'you received',
-    'payment received',
-    'transfer received',
-    'incoming',
-    'you got',
-    'account credited',
-    'credit alert',
-    'cash in',
-    'تم استلام',
-    'تم ايداع',
-    'تم إيداع',
-    'استلمت',
-    'وصلك',
-    'تم تحويل لك',
-    'تم الايداع',
-    'تم الإيداع',
-    'وردت',
-    'تم استقبال',
-    'حوالة واردة',
-    'حوالة واردة لحسابك',
-    'واردة لحسابك',
-    'واردة الى حسابك',
-    'واردة إلى حسابك',
-    'تمت إضافة',
-    'تم اضافه',
-    'اضافة الى حسابك',
-    'إضافة إلى حسابك',
-    'تم اضافة',
-    'تم إضافة',
-    'إشعار إيداع',
-    'اشعار ايداع',
-    'وارد',
-    'واردة',
-    'has been accepted',
-    'has been credited',
-    'accepted with',
-    'money transfer',
-  ]);
-}
-
-function _isSentPayment(input: string): boolean {
-  return _containsAny(input, [
-    // English - sent/outgoing
-    'you sent',
-    'you transferred',
-    'you paid',
-    'sent to',
-    'payment to',
-    'transfer to',
-    'paid to',
-    'outgoing transfer',
-    'money sent',
-    'transaction sent',
-    'deducted for',
-    'debited for',
-    'debited',
-    'withdrawal',
-    'cash out',
-    // Arabic - sent/outgoing
-    'تم ارسال',
-    'ارسلت',
-    'قمت بارسال',
-    'تم الدفع لـ',
-    'تم الدفع إلى',
-    'تم الدفع ل',
-    'دفعت',
-    'تم خصم لـ',
-    'تم التحويل الى',
-    'تم التحويل إلى',
-    'حولت',
-    'ارسال الى',
-    'إرسال إلى',
-    'حوالة صادرة',
-    'صادرة من حسابك',
-    'تم سحب',
-    'سحب',
-    'شراء',
-    'شحن محفظة',
-    'موبايل: تحويل بنكي:',
-    'تم إعادة شحن رصيدك',
-    'تم إعادة شحن',
-    'transfer to beneficiary',
-  ]);
 }
 
 function _isFalsePositive(input: string): boolean {
@@ -937,7 +789,7 @@ function _parseAndroidPaymentNotification(params: {
   amount: number | null;
   currency?: string;
   transactionId?: string;
-  direction: 'incoming' | 'outgoing' | 'unknown';
+  direction: 'detected';
 } | null {
   const packageLower = (params.packageName || '').toLowerCase();
   const messageNormalized = _stripTrailingAvailableBalanceLine(_normalizeDigits(params.message || ''));
@@ -990,7 +842,7 @@ function _parseAndroidPaymentNotification(params: {
     return null;
   }
 
-  const direction = _inferPaymentDirection(fullText);
+  const direction = 'detected' as const;
 
   let amountMatch =
     _amountAfterBimablagRegex.exec(combinedNormalized) ?? _amountAfterBimablagRegex.exec(messageNormalized);
@@ -1129,18 +981,14 @@ export const getPaymentStats = async (
 ): Promise<void> => {
   try {
     const userId = new mongoose.Types.ObjectId(req.userId);
-    const viewerIncoming = req.accessMode === 'viewer';
-    const directionMatch = viewerIncoming
-      ? { direction: { $in: ['incoming', 'unknown'] as const } }
-      : {};
     const now = new Date();
     const thirtyDaysAgo = new Date(now);
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
     const [lastPayment, agg, daily] = await Promise.all([
-      PaymentNotification.findOne({ userId: req.userId, ...directionMatch }).sort({ receivedAt: -1 }).lean(),
+      PaymentNotification.findOne({ userId: req.userId }).sort({ receivedAt: -1 }).lean(),
       PaymentNotification.aggregate([
-        { $match: { userId, ...directionMatch } },
+        { $match: { userId } },
         {
           $group: {
             _id: null,
@@ -1149,6 +997,7 @@ export const getPaymentStats = async (
             incoming: { $sum: { $cond: [{ $eq: ['$direction', 'incoming'] }, 1, 0] } },
             outgoing: { $sum: { $cond: [{ $eq: ['$direction', 'outgoing'] }, 1, 0] } },
             unknown: { $sum: { $cond: [{ $eq: ['$direction', 'unknown'] }, 1, 0] } },
+            detected: { $sum: { $cond: [{ $eq: ['$direction', 'detected'] }, 1, 0] } },
           },
         },
       ]),
@@ -1156,7 +1005,6 @@ export const getPaymentStats = async (
         {
           $match: {
             userId,
-            ...directionMatch,
             receivedAt: { $gte: thirtyDaysAgo },
           },
         },
@@ -1178,6 +1026,7 @@ export const getPaymentStats = async (
           incoming: number;
           outgoing: number;
           unknown: number;
+          detected: number;
         }
       | undefined;
 
@@ -1190,6 +1039,7 @@ export const getPaymentStats = async (
         incomingCount: g?.incoming ?? 0,
         outgoingCount: g?.outgoing ?? 0,
         unknownCount: g?.unknown ?? 0,
+        detectedCount: g?.detected ?? 0,
         dailyLast30Days: daily.map((d) => ({
           date: d._id as string,
           count: d.count as number,
@@ -1212,9 +1062,6 @@ export const getPaymentNotifications = async (
     const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit), 10) || 20));
     const skip = (page - 1) * limit;
     const filter: Record<string, unknown> = { userId: req.userId };
-    if (req.accessMode === 'viewer') {
-      filter.direction = { $in: ['incoming', 'unknown'] };
-    }
 
     const fromStr = String(req.query.from || '').trim();
     const toStr = String(req.query.to || '').trim();
@@ -1318,8 +1165,13 @@ export const updatePaymentNotificationDirection = async (
   try {
     const { id } = req.params;
     const { direction } = req.body ?? {};
-    if (direction !== 'incoming' && direction !== 'outgoing' && direction !== 'unknown') {
-      next(new BadRequestError('direction must be incoming, outgoing, or unknown'));
+    if (
+      direction !== 'incoming' &&
+      direction !== 'outgoing' &&
+      direction !== 'unknown' &&
+      direction !== 'detected'
+    ) {
+      next(new BadRequestError('direction must be incoming, outgoing, unknown, or detected'));
       return;
     }
     const updated = await PaymentNotification.findOneAndUpdate(

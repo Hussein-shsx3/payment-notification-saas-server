@@ -1,13 +1,13 @@
 import mongoose, { Document, Schema } from 'mongoose';
 
-export type PaymentDirection = 'incoming' | 'outgoing' | 'unknown';
+export type PaymentDirection = 'incoming' | 'outgoing' | 'unknown' | 'detected';
 
 export interface IPaymentNotification extends Document {
   userId: mongoose.Types.ObjectId;
   source: string;
   title: string;
   message: string;
-  /** Money in vs money out vs unclear (user can fix unknown in the app). */
+  /** Stored payments use `detected` (send/receive not inferred). Legacy rows may be incoming/outgoing/unknown. */
   direction: PaymentDirection;
   amount?: number;
   currency?: string;
@@ -32,8 +32,8 @@ const paymentNotificationSchema = new Schema<IPaymentNotification>(
     message: { type: String, required: true },
     direction: {
       type: String,
-      enum: ['incoming', 'outgoing', 'unknown'],
-      default: 'unknown',
+      enum: ['incoming', 'outgoing', 'unknown', 'detected'],
+      default: 'detected',
     },
     amount: { type: Number },
     currency: { type: String, trim: true, uppercase: true },
